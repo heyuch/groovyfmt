@@ -1,0 +1,18 @@
+rootProject.name = 'groovyfmt'
+
+// 两个 module，职责严格分开：
+//
+//   groovyfmt-core      formatter 本体（token/CST → 标注 → 规则 → 仲裁 → 渲染，外加 CLI）
+//                       不依赖任何格式化框架，可以独立当命令行工具用
+//
+//   groovyfmt-spotless  Spotless 适配器
+//                       只依赖 Spotless 的接口 + 用【字符串类名】通过隔离类加载器调用 core，
+//                       所以编译期与 core 完全解耦
+include 'groovyfmt-core'
+include 'groovyfmt-spotless'
+
+// Gradle 插件：把上面那个步骤接进 Spotless 的 DSL，让消费者只写 groovyfmt()
+include 'groovyfmt-gradle-plugin'
+
+// CodeNarc 自定义规则：把「格式化规则不得被豁免」这条约定做进门禁自身
+include 'groovyfmt-codenarc'

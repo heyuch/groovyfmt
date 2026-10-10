@@ -1,0 +1,206 @@
+// groovyfmt —— 根聚合工程：下发公共配置 + 自举格式检查 + 聚合任务
+//
+// 背景（Groovy 3/4 类加载器冲突、自举与版本固定、引导模式）见 README「自举与版本固定」。
+
+// 步骤类必须在构建脚本的 classpath 上，所以用 buildscript 而不是 custom 的隐式引用。
+// 本地仓库里还没有已发布版本时（典型场景：刚 clone）进入引导模式。
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+    dependencies {
+        def toolVersion = project.property('formatterToolVersion')
+        def m2Root = new File(System.getProperty('user.home'), '.m2/repository')
+        def pinned = { String id ->
+            // 仓库布局路径 = group 的点换成斜杠，必须与上面的 group 保持一致
+            new File(m2Root, "io/github/heyuch/groovyfmt/${id}/${toolVersion}/${id}-${toolVersion}.jar").isFile()
+        }
+        boolean boot = project.hasProperty('bootstrapFormatter') ||
+                !(pinned('groovyfmt-core') && pinned('groovyfmt-spotless'))
+        project.ext.bootstrapMode = boot
+        if (boot) {
+            // 不声明依赖：否则配置期解析不到 artifact 会失败，连 publishToMavenLocal 都跑不起来
+            project.logger.lifecycle('groovyfmt: 本地仓库没有已发布的 formatter → 引导模式')
+        } else {
+            classpath "io.github.heyuch.groovyfmt:groovyfmt-spotless:${toolVersion}"
+        }
+    }
+}
+
+plugins {
+    id 'base'
+    id 'com.diffplug.spotless' version '8.10.2'
+}
+
+// subprojects{} 是"跨工程配置"，规模变大、或各 module 需要不同配置子集时再换 convention plugin。
+subprojects {
+    apply plugin: 'groovy'
+    apply plugin: 'codenarc'
+    apply plugin: 'maven-publish'
+
+    group = 'io.github.heyuch.groovyfmt'
+    version = groovyfmtVersion
+
+    repositories {
+        mavenCentral()
+    }
+
+    // publishToMavenLocal == mvn install（装到 ~/.m2/repository）
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                from components.java
+            }
+        }
+    }
+
+    // Groovy 版本策略按 module 区分，所以这里不统一覆盖 groovyClasspath（见各 module 的构建文件）
+    tasks.withType(GroovyCompile).configureEach {
+        sourceCompatibility = '17'
+        targetCompatibility = '17'
+        options.encoding = 'UTF-8'
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 17
+    }
+
+    // 自定义规则要出现在 CodeNarc 的工具 classpath 上。
+    // 【不对规则模块自己生效】：那样它的 codenarcMain 会依赖自身的编译产物，形成环。
+    // 必须放在 afterEvaluate 里：过早添加 project 依赖会让 codenarc 配置被提前解析，
+    // 那时插件还没把 CodeNarc 工具本身加进去，于是报 ClassNotFoundException: CodeNarcTask。
+    afterEvaluate {
+        dependencies {
+            // 必须把工具【显式】写上：插件是用 defaultDependencies 添加 CodeNarc 的，
+            // 而 defaultDependencies 只在配置没有任何显式依赖时才生效 ——
+            // 只加规则会让工具本身被挤掉（ClassNotFoundException: CodeNarcTask）。
+            codenarc "org.codenarc:CodeNarc:${codenarcVersion}"
+            codenarc project.path == ':groovyfmt-codenarc'
+                    // 规则模块自己：用【自己的编译产物】（不是 project(...)，那样才成环）
+                    ? files(sourceSets.main.output)
+                    : project(':groovyfmt-codenarc')
+        }
+    }
+    if (project.path == ':groovyfmt-codenarc') {
+        // files(sourceSets.main.output) 不带来隐式任务依赖，显式接上
+        tasks.named('codenarcMain') {
+            dependsOn 'classes'
+        }
+        tasks.named('codenarcTest') {
+            dependsOn 'classes'
+        }
+    }
+
+    // 规则集不排除任何格式化规则 —— 格式由 groovyfmt 产出，由 CodeNarc 独立把关
+    codenarc {
+        toolVersion = codenarcVersion
+        configFile = rootProject.file('config/codenarc/codenarc.xml')
+        reportFormat = 'text'
+        maxPriority1Violations = 0
+        maxPriority2Violations = 0
+        maxPriority3Violations = 0
+    }
+
+    // 只分析源码，不含 src/test/resources 下故意写乱/非法的语料
+    tasks.named('codenarcMain') {
+        source = sourceSets.main.allGroovy
+    }
+
+    tasks.named('codenarcTest') {
+        source = sourceSets.test.allGroovy
+    }
+}
+
+def bootstrapMode = project.ext.bootstrapMode as boolean
+
+configurations {
+    formatterTool     // 已发布的固定版本（默认路径）
+    groovy4           // 仅引导模式：本工程 classes + Groovy 4
+}
+
+dependencies {
+    formatterTool "io.github.heyuch.groovyfmt:groovyfmt-core:${formatterToolVersion}"
+    groovy4 "org.apache.groovy:groovy:${groovyVersion}"
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+// 所有 module 的源码。从 subprojects 派生而不是硬编码：硬编码漏掉过新模块。
+// 排除 resources/，否则会把 fixtures 里故意写乱的语料也格式化掉。
+def sourceTargets = { ->
+    subprojects.collect { Project sub ->
+        sub.fileTree('src') {
+            include '**/*.groovy'
+            exclude '**/resources/**'
+        }
+    }
+}
+
+if (!bootstrapMode) {
+    // 反射而不是直接 new：Groovy 在编译期解析整个脚本，
+    // 静态引用一个不在 classpath 上的类会让脚本编译失败，if 的运行时分支救不了它。
+    def stepClass = Class.forName('io.github.heyuch.groovyfmt.spotless.GroovyFmtStep')
+    def fmtClasspath = configurations.formatterTool.files*.absolutePath as List<String>
+
+    spotless {
+        groovy {
+            target(*sourceTargets())
+
+            // importOrder 只重排整行，由 groovyfmt 收尾统一间距（两步作用于不相交区域，可交换）
+            importOrder 'java', 'javax', 'groovy', 'org.apache.groovy', 'com', 'io.github.heyuch', ''
+
+            custom 'groovyfmt', stepClass.getConstructor(List).newInstance(fmtClasspath)
+
+            // 同版本号重新发布时 classpath 与 fingerprint 都不变，必须手动 +1
+            bumpThisNumberIfACustomStepChanges(1)
+        }
+    }
+} else {
+    // 引导模式不走 Spotless：它的步骤对象必须在【配置期】存在，而本工程产物要到【执行期】才产出。
+    // 改用刚编译出的 CLI 在独立 JVM 里检查 —— 独立进程绕开 Groovy 冲突，因此不需要任何桥接类。
+    def selfFiles = sourceTargets().collectMany { it.files }*.absolutePath
+    def cliClasspath = files({ project(':groovyfmt-core').sourceSets.main.runtimeClasspath })
+
+    [selfCheck: '--check', selfApply: '-w'].each { String name, String flag ->
+        tasks.register(name, JavaExec) {
+            group = 'verification'
+            description = "引导模式自举（CLI，独立 JVM）：${flag}"
+            dependsOn ':groovyfmt-core:classes'
+            classpath = cliClasspath
+            mainClass = 'io.github.heyuch.groovyfmt.cli.Main'
+            args = [flag] + selfFiles
+        }
+    }
+}
+
+// ─────────────────────────── 聚合任务 ───────────────────────────
+// runTests 无需聚合：Gradle 的任务名匹配会在每个含该任务的 module 里执行它。
+
+tasks.register('formatApply') {
+    group = 'verification'
+    description = '用 groovyfmt 就地格式化全部源码'
+    dependsOn bootstrapMode ? 'selfApply' : 'spotlessApply'
+}
+
+tasks.register('formatCheck') {
+    group = 'verification'
+    description = '检查全部源码是否已格式化'
+    dependsOn bootstrapMode ? 'selfCheck' : 'spotlessCheck'
+}
+
+tasks.register('publishFormatter') {
+    group = 'publishing'
+    description = '把 formatter 发布到本地仓库（= mvn install），供自举使用'
+    // 不依赖 check：首次发布时 pin 指向的版本还不存在，依赖 check 会形成死锁
+    dependsOn subprojects.collect { "${it.path}:publishToMavenLocal" }
+}
+
+// 格式检查必须挂进 check，否则"源码没格式化"不会让构建失败
+tasks.named('check') {
+    dependsOn 'formatCheck'
+}

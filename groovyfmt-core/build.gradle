@@ -1,0 +1,37 @@
+// formatter 本体：纯 "文本 → 文本" 工具，不依赖任何格式化框架，也可独立当 CLI 用。
+plugins {
+    id 'application'
+}
+
+// Gradle 8 自带 Groovy 3，缺少 ANTLR4 版解析器（org.apache.groovy.parser.antlr4），
+// 所以本 module 显式用 Groovy 4 编译。
+configurations {
+    groovy4
+}
+
+dependencies {
+    implementation "org.apache.groovy:groovy:${groovyVersion}"
+    groovy4 "org.apache.groovy:groovy:${groovyVersion}"
+}
+
+tasks.withType(GroovyCompile).configureEach {
+    groovyClasspath = configurations.groovy4
+}
+
+
+application {
+    mainClass = 'io.github.heyuch.groovyfmt.cli.Main'
+    applicationName = 'groovyfmt'
+}
+
+tasks.register('runTests', JavaExec) {
+    group = 'verification'
+    description = 'E2E fixture + API 契约 + CLI 退出码契约 + 真实样例冒烟'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.heyuch.groovyfmt.test.TestMain'
+    workingDir = projectDir
+}
+
+tasks.named('check') {
+    dependsOn 'runTests'
+}

@@ -1,0 +1,11 @@
+# Gradle
+.gradle/
+build/
+
+# 旧的零依赖构建产物（已改用 Gradle）
+out/
+lib/
+
+# IDE
+.idea/
+*.iml

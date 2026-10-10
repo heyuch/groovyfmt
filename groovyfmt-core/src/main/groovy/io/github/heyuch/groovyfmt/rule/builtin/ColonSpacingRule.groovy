@@ -1,0 +1,34 @@
+package io.github.heyuch.groovyfmt.rule.builtin
+
+import groovy.transform.CompileStatic
+
+import io.github.heyuch.groovyfmt.model.Slot
+import io.github.heyuch.groovyfmt.model.Spacing
+import io.github.heyuch.groovyfmt.rule.MappedSpacingRule
+
+/**
+ * 冒号对齐。
+ *
+ * <p>Map 字面量 / 具名参数：[k: v]、foo(a: 1) —— 冒号前不加、后加一个空格。
+ * 三元表达式：a ? b : c —— 两侧都加。
+ *
+ * <p>case / default / label / assert 消息的冒号根本不会被分类到这里
+ * （{@code SlotClassifier} 返回 null），所以不会被误改。
+ */
+@CompileStatic
+class ColonSpacingRule extends MappedSpacingRule {
+
+    ColonSpacingRule() {
+        super('spacing.colon', slotMapping())
+    }
+
+    private static Map<Slot, Spacing> slotMapping() {
+        Map<Slot, Spacing> m = [:]
+        m[Slot.BEFORE_COLON] = Spacing.NONE
+        m[Slot.AFTER_COLON] = Spacing.SPACE
+        m[Slot.BEFORE_TERNARY_COLON] = Spacing.SPACE
+        m[Slot.AFTER_TERNARY_COLON] = Spacing.SPACE
+        m
+    }
+
+}

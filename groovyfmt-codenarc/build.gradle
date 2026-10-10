@@ -1,0 +1,23 @@
+// CodeNarc 自定义规则模块。
+//
+// 为什么单独一个 module：规则类必须出现在 CodeNarc 的工具 classpath 上，
+// 而一个 module 的 codenarcMain 依赖它自己的编译产物会形成环 —— 所以规则独立成模块，
+// 并且【不对自己生效】（根工程里做了排除）。
+plugins {
+    id 'java-library'
+}
+
+// 与 CodeNarc 运行时一致的 Groovy 4（CodeNarc 的 groovy 是 runtime 作用域，编译期看不到）
+configurations {
+    groovy4
+}
+
+dependencies {
+    compileOnly "org.codenarc:CodeNarc:${codenarcVersion}"
+    compileOnly "org.apache.groovy:groovy:${groovyVersion}"
+    groovy4 "org.apache.groovy:groovy:${groovyVersion}"
+}
+
+tasks.withType(GroovyCompile).configureEach {
+    groovyClasspath = configurations.groovy4
+}

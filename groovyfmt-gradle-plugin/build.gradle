@@ -1,0 +1,34 @@
+// Gradle 插件：把 groovyfmt 步骤自动加进 Spotless 的 groovy 扩展。
+//
+//   plugins { id 'com.diffplug.spotless' version '8.10.2'; id 'io.github.heyuch.groovyfmt' version '0.1.0' }
+//   spotless { groovy { importOrder 'java', 'javax', 'groovy', 'com', ''; target 'src/**/*.groovy' } }
+//
+// 不要再自己调 addStep(GroovyFmt.step())，会得到 "Multiple steps with name 'groovyfmt'"。
+plugins {
+    id 'java-gradle-plugin'
+}
+
+dependencies {
+    // 步骤本体（复用，不重复实现）
+    implementation project(':groovyfmt-spotless')
+
+    // 只在编译期需要：Gradle API 由 java-gradle-plugin 提供，Spotless 由消费者自己的插件提供
+    compileOnly "com.diffplug.spotless:spotless-lib:${spotlessLibVersion}"
+    compileOnly "com.diffplug.spotless:spotless-plugin-gradle:${spotlessPluginVersion}"
+}
+
+gradlePlugin {
+    plugins {
+        groovyfmt {
+            id = 'io.github.heyuch.groovyfmt'
+            implementationClass = 'io.github.heyuch.groovyfmt.gradle.GroovyFmtPlugin'
+        }
+    }
+}
+
+// 把 core 的坐标烘焙进资源文件，保证插件版本与 formatter 版本永远一致
+tasks.named('processResources') {
+    filesMatching('io/github/heyuch/groovyfmt/gradle/groovyfmt.properties') {
+        expand(groovyfmtCoordinate: "io.github.heyuch.groovyfmt:groovyfmt-core:${groovyfmtVersion}")
+    }
+}

@@ -1,0 +1,30 @@
+// Spotless 适配器。
+//
+// 刻意不依赖 groovyfmt-core：只通过【字符串类名 + 反射】在隔离类加载器里调用它，
+// 所以编译期零耦合，classpath 由宿主（Gradle 插件或消费者）注入。
+// 隔离加载器是为了绕开 Groovy 3/4 的 ANTLR4 同名冲突（见 README）。
+// 用 Gradle 自带的 Groovy 编译：它要在守护进程里被加载，宿主给什么 Groovy 就得兼容什么。
+dependencies {
+    compileOnly localGroovy()
+    compileOnly "com.diffplug.spotless:spotless-lib:${spotlessLibVersion}"
+
+    // 测试要能实例化 GroovyFmtStep（父类型来自 spotless-lib）
+    testImplementation localGroovy()
+    testImplementation "com.diffplug.spotless:spotless-lib:${spotlessLibVersion}"
+    // 刻意不把 core 放进测试 classpath：Groovy 3 与 4 会在同一个 JVM 里撞车。
+    // core 只以文件路径通过系统属性传入 —— 这也正是消费者的用法。
+}
+
+tasks.register('runTests', JavaExec) {
+    group = 'verification'
+    description = '验证适配器能通过隔离类加载器调用 formatter 本体'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'io.github.heyuch.groovyfmt.spotless.SpotlessStepTest'
+    workingDir = projectDir
+    systemProperty 'groovyfmt.coreClasspath',
+            project(':groovyfmt-core').sourceSets.main.runtimeClasspath.asPath
+}
+
+tasks.named('check') {
+    dependsOn 'runTests'
+}

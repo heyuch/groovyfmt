@@ -1,0 +1,96 @@
+<!--
+  groovyfmt 自己的 CodeNarc 规则集。
+
+  ── 核心原则：CodeNarc 的格式化规则【全部保留】，让 formatter 与它保持一致 ──
+
+  ── 硬约定：涉及代码格式的规则【不得】被 @SuppressWarnings 豁免，也不得被排除 ──
+
+  门禁报警说明【规范不完整】—— 正确的反应是去实现那个格式化特性，
+  而不是把门禁关掉。一旦允许豁免，门禁就退化成"只要没人抱怨就通过"，格式会静默漂移。
+
+  这条约定由本文件末尾注册的【自定义规则】NoFormattingRuleSuppression 执行：
+  它直接读 CodeNarc 自带的 rulesets/formatting.xml 算出格式化规则清单（当前 37 条），
+  再检查 class / field / method / constructor / package / import 上的 @SuppressWarnings，
+  一旦出现交集就报违规（P2），报告里带文件与行号。
+  实现见 groovyfmt-codenarc 模块。
+
+  本文件中唯一一处 <exclude> + 重新 <rule> 声明不算豁免：
+  SpaceAroundMapEntryColon 是被【重新声明】的（换了属性值，规则仍然生效），
+  见文件末尾的说明。
+
+  这样形成两道互补的关卡：
+    · groovyfmt  = 规范（spec）：负责把代码变成"确定的形状"，并能自动修复
+    · CodeNarc   = 门禁（gate）：独立地检查"形状是否真的符合标准"
+
+  为什么值得这么做：CodeNarc 的格式化规则大多只是【必要条件】而不是充分条件
+  （例如 SpaceAroundOperator 只要求运算符旁"有"空格，不要求"恰好一个"），
+  所以它当不了 formatter 的规范；但正因为它比 formatter 弱、而且是独立实现的，
+  它就能在 formatter 出 bug 时把不合格的输出拦下来 —— 这正是独立的第二意见的价值。
+
+  代价是每条风格决策都要在两处表达。所以取舍是：
+    · 能用配置让它和 formatter 一致的 → 【配置】，而不是排除
+    · 只有确实无法一致（或属于另一类关注点）的 → 才排除，并写明理由
+-->
+<ruleset xmlns="http://codenarc.org/ruleset/1.0"
+         xsi:schemaLocation="http://codenarc.org/ruleset/1.0 http://codenarc.org/ruleset-schema.xsd"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <description>groovyfmt 的代码质量规则集：格式由 groovyfmt 产出，由 CodeNarc 独立把关</description>
+
+    <!-- ── 正确性 ── -->
+    <ruleset-ref path='rulesets/basic.xml'/>
+    <ruleset-ref path='rulesets/exceptions.xml'/>
+    <ruleset-ref path='rulesets/imports.xml'/>
+    <ruleset-ref path='rulesets/unnecessary.xml'/>
+    <ruleset-ref path='rulesets/unused.xml'/>
+
+    <!-- ── 并发 / 设计 ── -->
+    <ruleset-ref path='rulesets/concurrency.xml'/>
+    <ruleset-ref path='rulesets/design.xml'/>
+
+    <!-- ── 命名 ── -->
+    <ruleset-ref path='rulesets/naming.xml'/>
+
+    <!-- ── 规模 ── -->
+    <ruleset-ref path='rulesets/size.xml'/>
+
+    <!--
+      ── 格式：整个 formatting.xml 全开，一条都不排除 ──
+
+      包括这些通常会被"因为和 formatter 冲突"而关掉的规则：
+        SpaceAroundOperator / SpaceAfterComma / SpaceAfter·Before·OpeningBrace
+        SpaceBeforeClosingBrace / TrailingWhitespace / Indentation / LineLength
+        FileEndsWithoutNewline / ConsecutiveBlankLines
+        ClassStartsWithBlankLine / ClassEndsWithBlankLine / ClassJavadoc
+
+      它们能全部通过，是因为 groovyfmt 已经实现了对应的能力，特别是【空行控制】：
+        maxBlankLines              → ConsecutiveBlankLines
+        blankLinesAfterClassOpen   → ClassStartsWithBlankLine
+        blankLinesBeforeClassClose → ClassEndsWithBlankLine
+      （空行控制在 Groovy 里意味着增删 NL token —— 这是本工具唯一会增删 token 的环节，
+        详见 BlankLineNormalizer 的注释与 Cst#canonicalTokenFingerprint 的安全论证。）
+
+      唯一需要"重新加回来并改配置"的是下面这条。
+    -->
+    <ruleset-ref path='rulesets/formatting.xml'>
+        <exclude name='SpaceAroundMapEntryColon'/>
+    </ruleset-ref>
+
+    <rule class='org.codenarc.rule.formatting.SpaceAroundMapEntryColonRule'>
+        <!-- 冒号前必须是非空白：[code: ...] -->
+        <property name='characterBeforeColonRegex' value='\S'/>
+        <!--
+          冒号后必须是空白：[code: ...]
+          该规则的【默认值】是 \S（即 [code:...]），与 Groovy 通用惯例相反，
+          也和任何主流 Groovy 格式化器的输出相反。所以这里配成与 house style 一致 ——
+          注意是【配置】而不是【排除】：规则的把关作用被完整保留了。
+        -->
+        <property name='characterAfterColonRegex' value='\s'/>
+    </rule>
+
+    <!--
+      本项目的自定义规则：把「格式化规则不得被豁免」这条约定做进门禁自身。
+      注意：规则集 schema 要求 <rule> 排在所有 <ruleset-ref> 之后，所以放在文件末尾。
+    -->
+    <rule class='io.github.heyuch.groovyfmt.codenarc.NoFormattingRuleSuppressionRule'/>
+</ruleset>
