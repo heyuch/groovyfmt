@@ -33,7 +33,7 @@ build/install/groovyfmt/bin/groovyfmt --no-blank-lines Foo.groovy     # 关闭�
 | --- | --- | --- |
 | 静态分析 | `codenarcMain` / `codenarcTest` | CodeNarc，**`formatting.xml` 一条都不排除**，`maxPriority1/2/3Violations = 0` |
 | **自举格式检查** | `formatCheck` | 用刚构建出的 formatter 检查它**自己的源码**是否符合自己的规范 |
-| E2E 黄金样例 | `runTests` | **45 个 fixture**：每个语法片段跑完整 formatter 比对结果 |
+| E2E 黄金样例 | `runTests` | **47 个 fixture**：每个语法片段跑完整 formatter 比对结果 |
 | API / CLI 契约 | `runTests` | 12 项：注册期冲突、指标口径、CLI 退出码 |
 
 本地修复：
@@ -400,7 +400,7 @@ GStringPart  [5724..5725] `:$`       ← `:` 真正属于这里
 | --- | --- |
 | 主代码 | 39 个 Groovy 文件，2349 行 |
 | 规则 | 14 条，**平均 20 行/条** |
-| 测试 | 57 项全通过（45 E2E fixture + 12 契约/CLI） |
+| 测试 | 59 项全通过（47 E2E fixture + 12 契约/CLI） |
 | CodeNarc | P1=0 P2=0 P3=0 |
 | 自举格式检查 | 通过且幂等 |
 
@@ -584,7 +584,8 @@ class IndexBracketSpacingRule extends ConstantSpacingRule {
 groovy-fmt/
 ├── build.sh / gradlew / gradle/   统一构建入口与 wrapper
 ├── build.gradle                   根聚合工程：下发公共配置 + Spotless 自举 + 聚合任务
-├── config/codenarc/codenarc.xml   CodeNarc 规则集（两个 module 共用，每条取舍都写明理由）
+├── config/codenarc/codenarc.xml   CodeNarc 规则集（四个 module 共用，每条取舍都写明理由）
+├── docs/                          设计记录（见 docs/design.md）
 │
 ├── groovyfmt-core/                formatter 本体（不依赖任何格式化框架）
 │   ├── build.gradle               用 Groovy 4 编译；application 插件产出 CLI
@@ -599,15 +600,29 @@ groovy-fmt/
 │   │   ├── pipeline/   FormatterStep, FinalNewlineStep, FormatResult, Formatter（安全闸门）
 │   │   └── cli/        Main
 │   ├── src/test/groovy/io/github/heyuch/groovyfmt/test/    TestMain + FixtureRunner
-│   ├── src/test/resources/fixtures/           45 个 E2E 语料
+│   │   ├── src/test/resources/fixtures/           47 个 E2E 语料（含 README 说明约定）
 │   └── examples/Messy.groovy
 │
-└── groovyfmt-spotless/            Spotless 适配器（编译期与 core 完全解耦）
-    ├── build.gradle               用【Gradle 自带的 Groovy】编译 —— 它要在守护进程里被加载
-    └── src/main/groovy/io/github/heyuch/groovyfmt/spotless/GroovyFmtStep.groovy
+├── groovyfmt-spotless/            Spotless 适配器（编译期与 core 完全解耦）
+│   ├── build.gradle               用【Gradle 自带的 Groovy】编译 —— 它要在守护进程里被加载
+│   └── src/main/groovy/io/github/heyuch/groovyfmt/spotless/GroovyFmtStep.groovy
+│
+├── groovyfmt-gradle-plugin/       Gradle 插件：把步骤自动加进 Spotless 的 groovy 扩展
+│   └── src/main/groovy/.../gradle/    GroovyFmtPlugin, GroovyFmt
+│
+└── groovyfmt-codenarc/            CodeNarc 自定义规则：格式化规则不得被豁免
+    └── src/main/groovy/.../codenarc/   NoFormattingRuleSuppressionRule + Visitor
 ```
 
-### 为什么两个 module 的 Groovy 版本策略不同
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [README.md](README.md) | 就是你正在看的这份：用法、质量闸门、约定、已知限制 |
+| [docs/design.md](docs/design.md) | 设计记录：greclipse 体积实测、token-repositioning 架构论证、规则抽象、**11 处被证伪的假设**、以及每条结论的实测证据 |
+| [fixtures/README.md](groovyfmt-core/src/test/resources/fixtures/README.md) | E2E 语料的约定：三类文件名（`.groovy` / `.expected.groovy` / `.invalid.groovy`）与不变量 |
+
+### 为什么两类 module 的 Groovy 版本策略不同
 
 这是拆分过程中最重要的一个决定：
 
