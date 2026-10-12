@@ -1234,6 +1234,57 @@ rm -rf ~/.m2/repository/io/github/heyuch/groovyfmt
 rm -rf ~/.m2/repository/io/github/heyuch/groovyfmt/groovyfmt-{core,spotless,gradle-plugin,codenarc}
 ```
 
+## 19. 历史缺陷与仍然开放的设计权衡
+
+### 19.1 已修的历史缺陷
+
+两条都是**自举之后**才暴露的 —— 我们自己的源码里原本没有这些形态，直到开始写
+Gradle 插件（SAM 适配 = 匿名内部类）才撞上。这说明自举不只是仪式感。
+
+**① 作为方法调用实参的匿名内部类，类体被多缩进一层**
+
+```groovy
+f(new Runnable() {
+    @Override            // ← 被格式化到 20 空格（应为 12）
+    void run() { ... }
+})                       // ← 16 空格（应为 8）
+```
+
+根因是 `ContinuationIndentRule` 用了**全部**未闭合括号数（`braceDepth×4 + parenDepth×8`）。
+而外层那个 `f(` 的"我在实参里"已经被花括号的块缩进表达过了，再叠一层就多缩进。
+修法：只统计**最内层未闭合花括号之后**打开的括号（`parensSinceBrace`）。
+
+> 更有意思的是**它怎么被发现**：`formatApply` 的覆盖范围扩大到插件 module 之后，
+> CodeNarc 立刻报 `Indentation` —— **门禁抓住了规范自己的 bug**。
+> 这是 §15 那个"规范 / 门禁"模型的一个意外收益。
+
+回归用例：`indent/anonymous-class-in-call.groovy`。
+
+**② 具名嵌套类的类体空行：一个并不存在的豁免**
+
+曾以为"groovyfmt 只规范化顶层类体"，于是给 `GroovyFmtStep.Identity` 加了
+`@SuppressWarnings('ClassEndsWithBlankLine')`。实测（`static final class B implements ...`、
+带注解的嵌套类）**本来就支持**，那个豁免防的是一个不存在的问题，已删除。
+
+> 教训：**豁免之前先验证违规是否真的存在**。那个注解是在跑过 `formatApply` 之前
+> 就写上去的 —— 也就是说，豁免的是一个"我以为会报"的违规。
+
+回归用例：`indent/nested-class-blank-lines.groovy`。
+
+### 19.2 仍然开放的设计权衡
+
+这几条是刻意的取舍，不是疏漏。列在这里是为了让"将来要不要改"有据可依。
+
+| # | 取舍 | 换来了什么 | 代价 / 若要走另一条路 |
+| --- | --- | --- | --- |
+| 1 | **Slot 排他 owner** | "加规则不会改变既有行为"是**注册期静态保证** | 无法用"再加一个类"覆盖已有位置。要策略插拔就得引入优先级投票链，而冲突会从注册期静态错误退化成运行期隐式行为 |
+| 2 | **失败即整体回退** | 最安全 | 最保守：任何一个 gap 出问题就整文件不动。更好的是**局部回退**，需要把闸门做到 gap 粒度 |
+| 3 | **顶层续行保留原缩进是硬编码兜底** | 避免被拍平到第 0 列 | 应提升成正式的 `IndentRule`；但 `IndentRule` 现在只能返回列数增量，表达不了"不表态、保留原文"，需先扩接口 |
+| 4 | **`--no-verify` 只关掉语法树比对** | 词法 / 编译器 / token 序列闸门始终在 | 命名可能误导（听起来像"关掉全部校验"）。要么改名，要么让它分级 |
+| 5 | **测试是零依赖自研跑器** | 构建极简，无测试框架依赖 | 接 JUnit 5 能拿到报告与 IDE 集成 |
+
+---
+
 ## 附 A：复现本文实测的命令
 
 ```bash
