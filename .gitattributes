@@ -1,0 +1,5 @@
+# 这两个 fixture 里【故意】含 CRLF，用来验证 formatter 不改动行尾。
+# 标记为 -text（当二进制处理）以禁止任何行尾转换 —— 否则在开启
+# core.autocrlf 的机器上 checkout 后语料会变形，测试会莫名其妙地失败。
+/groovyfmt-core/src/test/resources/fixtures/fail-closed/crlf.groovy -text
+/groovyfmt-core/src/test/resources/fixtures/fail-closed/crlf.expected.groovy -text

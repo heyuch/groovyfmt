@@ -332,6 +332,34 @@ pin 的意义（把开发中的实现与自用实现解耦）就消失了。
 groovyfmt: 本地仓库没有已发布的 formatter → 引导模式
 ```
 
+### CI
+
+`.github/workflows/ci.yml` 在每次 `push` 与 PR 上跑完整闸门。它有一个**前置步骤**
+值得说明：
+
+```bash
+./gradlew publishFormatter   # 1. 自我发布到本地仓库
+./gradlew check              # 2. 完整闸门
+```
+
+**为什么 CI 要先发布**：自举需要"本地仓库里已发布的 formatter"。CI 上 `~/.m2` 是空的，
+构建会**自动进入引导模式** —— 那能跑通构建，但引导模式会**跳过 Spotless**
+（因此也跳过 `importOrder` 检查），而且此时直接调用 `spotless*` 任务会失败
+（Spotless 块根本没被配置）。
+
+所以 CI 走的是和开发者本地一致的流程：先发布，再用已发布版本自举。
+这也顺带在 CI 上验证了"发布 → 自举"这条链路本身。
+
+另外两点：测试是自研跑器，**直接打印到 stdout**（没有 JUnit XML），
+失败信息就在 CI 日志里；workflow 在失败时额外上传 CodeNarc 报告。
+`.gitattributes` 把两个故意的 CRLF 语料标记为 `-text`，防止在开启
+`core.autocrlf` 的机器上 checkout 后语料变形。
+
+**未来接自动发布**需要：Maven Central 凭据 + GPG 签名 + `maven-publish` 的
+`publishToMavenCentral`。到那时可以把 CI 的第一步换成"从真实仓库解析已发布的
+`formatterToolVersion`" —— 只有那时才真正验证了"开发中的实现"与"自用实现"的隔离，
+也才能去掉消费者侧对 `mavenLocal()` 的依赖。
+
 ### 如何新增一条规则
 
 规则框架的设计目标是：**"新增规则"不可能顺带改变已有规则的行为。**
