@@ -189,10 +189,10 @@ def formatter = loader.loadClass('io.github.heyuch.groovyfmt.pipeline.Formatter'
 
 ### 自举用的是【已发布】的固定版本，不是工作树里的实现
 
-`formatterTool` 解析的是 `io.github.heyuch.groovyfmt:groovyfmt-core:<formatterToolVersion>`，
+`formatterTool` 解析的是 `io.github.heyuch:groovyfmt-core:<formatterToolVersion>`，
 也就是**本地仓库里已发布的那个成熟版本**。原因见"自举与版本固定"一节。
 
-Spotless 的**步骤类**同样来自本地仓库：`io.github.heyuch.groovyfmt:groovyfmt-spotless:<formatterToolVersion>`，
+Spotless 的**步骤类**同样来自本地仓库：`io.github.heyuch:groovyfmt-spotless:<formatterToolVersion>`，
 通过构建脚本顶部的 `buildscript {}` 引入。也就是说，自举时跑的是
 **和外部消费者完全一样的那个适配器**，构建脚本里没有第二份实现。
 
@@ -255,9 +255,9 @@ spotless {
 [GroovyFmtStep](src/main/groovy/io/github/heyuch/groovyfmt/spotless/GroovyFmtStep.groovy)：
 
 ```groovy
-buildscript { dependencies { classpath 'io.github.heyuch.groovyfmt:groovyfmt:0.1.0' } }
+buildscript { dependencies { classpath 'io.github.heyuch:groovyfmt-spotless:0.1.0' } }
 configurations { groovyfmtRuntime }
-dependencies { groovyfmtRuntime 'io.github.heyuch.groovyfmt:groovyfmt:0.1.0' }
+dependencies { groovyfmtRuntime 'io.github.heyuch:groovyfmt-core:0.1.0' }
 
 spotless {
     groovy {

@@ -11,10 +11,12 @@ buildscript {
     }
     dependencies {
         def toolVersion = project.property('formatterToolVersion')
+        String groupId = project.property('projectGroup')
         def m2Root = new File(System.getProperty('user.home'), '.m2/repository')
+        // 仓库布局路径由 group 派生（点换成斜杠）—— 不要写死，见 gradle.properties 的说明
+        String m2Path = groupId.replace('.', '/')
         def pinned = { String id ->
-            // 仓库布局路径 = group 的点换成斜杠，必须与上面的 group 保持一致
-            new File(m2Root, "io/github/heyuch/groovyfmt/${id}/${toolVersion}/${id}-${toolVersion}.jar").isFile()
+            new File(m2Root, "${m2Path}/${id}/${toolVersion}/${id}-${toolVersion}.jar").isFile()
         }
         boolean boot = project.hasProperty('bootstrapFormatter') ||
                 !(pinned('groovyfmt-core') && pinned('groovyfmt-spotless'))
@@ -23,7 +25,7 @@ buildscript {
             // 不声明依赖：否则配置期解析不到 artifact 会失败，连 publishToMavenLocal 都跑不起来
             project.logger.lifecycle('groovyfmt: 本地仓库没有已发布的 formatter → 引导模式')
         } else {
-            classpath "io.github.heyuch.groovyfmt:groovyfmt-spotless:${toolVersion}"
+            classpath "${groupId}:groovyfmt-spotless:${toolVersion}"
         }
     }
 }
@@ -39,7 +41,7 @@ subprojects {
     apply plugin: 'codenarc'
     apply plugin: 'maven-publish'
 
-    group = 'io.github.heyuch.groovyfmt'
+    group = project.property('projectGroup')
     version = groovyfmtVersion
 
     repositories {
@@ -121,7 +123,7 @@ configurations {
 }
 
 dependencies {
-    formatterTool "io.github.heyuch.groovyfmt:groovyfmt-core:${formatterToolVersion}"
+    formatterTool "${project.property('projectGroup')}:groovyfmt-core:${formatterToolVersion}"
     groovy4 "org.apache.groovy:groovy:${groovyVersion}"
 }
 

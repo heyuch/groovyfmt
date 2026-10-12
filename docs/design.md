@@ -1190,7 +1190,14 @@ tasks.named('runTests', JavaExec) {
 
 ### 18.4 顺带完成的重命名，以及它暴露的 bug
 
-Maven group 与 Java package 一起从 `dev.groovyfmt` 改为 **`io.github.heyuch.groovyfmt`**。
+坐标经历了两步：先把 Maven group 与 Java package 一起从 `dev.groovyfmt` 改为
+`io.github.heyuch.groovyfmt`，随后发现 **group 与 artifactId 重复**（`io.github.heyuch.groovyfmt:groovyfmt-core`），
+又把 group 收敛为 **`io.github.heyuch`**（变成 `io.github.heyuch:groovyfmt-core`）。
+Java package 保持 `io.github.heyuch.groovyfmt.*` —— 它不存在同样的重复问题。
+
+为此 group 被提取成 `gradle.properties` 里的 **`projectGroup`**，由它派生发布坐标、
+依赖坐标与本地仓库路径三样东西。原因就是下面这个 bug。
+
 这次重命名暴露出一个**只有重命名才会暴露**的 bug：
 
 > 自举侦测用的 m2 路径仍是**旧 group**，而解析用的坐标已是**新 group**。
@@ -1200,6 +1207,32 @@ Maven group 与 Java package 一起从 `dev.groovyfmt` 改为 **`io.github.heyuc
 **教训**：同一个事实（group）在"侦测"和"使用"两处各写了一遍，而残留的旧 artifact
 **掩盖**了不一致 —— 如果没有旧 artifact，侦测会正确落到引导模式，反而不会出错。
 凡是"路径 = 坐标的另一种写法"的地方，都应该从同一个来源派生。
+
+### 18.5 插件的 id 与坐标是两件事
+
+改 group 时一并考虑过插件 id，**结论是不改**（保持 `io.github.heyuch.groovyfmt`）：
+
+- 它符合 Gradle 惯例：`命名空间 + 项目名`。Spotless 自身就是这个套路 ——
+  它的 group 与插件 id 都是 `com.diffplug.spotless`。
+- 容易注意到插件**标记**坐标里 id 出现了两次：
+  `io.github.heyuch.groovyfmt:io.github.heyuch.groovyfmt.gradle.plugin:0.1.0`。
+  但这是 Gradle 标记机制**固有的**：它规定 marker 的 group = 插件 id、
+  artifact = 插件 id + `.gradle.plugin`，**换任何 id 都会重复**。
+  而且这个坐标是内部的 —— 用户只写 `id '...'`，永远看不到它。
+- ⇒ 改 id 并不能消除任何重复，只是换一种命名风格。所以按惯例保留。
+
+顺带一个容易踩的坑：`~/.m2/repository/io/github/heyuch/groovyfmt/` 这个目录下
+**同时**存着两样东西 —— 旧的 group artifact，以及**当前的插件标记**（因为标记的 group
+恒等于插件 id）。清理旧 group 时必须只删前者：
+
+```bash
+# ✗ 会把插件标记一起删掉，让所有 plugins { id 'io.github.heyuch.groovyfmt' } 的
+#   消费者失效 —— 而且当场不会报错，要等别人下次构建才发现
+rm -rf ~/.m2/repository/io/github/heyuch/groovyfmt
+
+# ✓ 只删那 4 个 artifact
+rm -rf ~/.m2/repository/io/github/heyuch/groovyfmt/groovyfmt-{core,spotless,gradle-plugin,codenarc}
+```
 
 ## 附 A：复现本文实测的命令
 

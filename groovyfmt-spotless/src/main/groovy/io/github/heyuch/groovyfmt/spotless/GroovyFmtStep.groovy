@@ -29,10 +29,10 @@ import com.diffplug.spotless.SerializedFunction
  * <h3>消费者用法</h3>
  * <pre>
  * buildscript {
- *     dependencies { classpath 'io.github.heyuch.groovyfmt:groovyfmt-spotless:0.1.0' }
+ *     dependencies { classpath 'io.github.heyuch:groovyfmt-spotless:0.1.0' }
  * }
  * configurations { groovyfmtRuntime }
- * dependencies { groovyfmtRuntime 'io.github.heyuch.groovyfmt:groovyfmt-core:0.1.0' }
+ * dependencies { groovyfmtRuntime 'io.github.heyuch:groovyfmt-core:0.1.0' }
  *
  * spotless {
  *     groovy {

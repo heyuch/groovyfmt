@@ -29,6 +29,6 @@ gradlePlugin {
 // 把 core 的坐标烘焙进资源文件，保证插件版本与 formatter 版本永远一致
 tasks.named('processResources') {
     filesMatching('io/github/heyuch/groovyfmt/gradle/groovyfmt.properties') {
-        expand(groovyfmtCoordinate: "io.github.heyuch.groovyfmt:groovyfmt-core:${groovyfmtVersion}")
+        expand(groovyfmtCoordinate: "${project.property('projectGroup')}:groovyfmt-core:${groovyfmtVersion}")
     }
 }
