@@ -167,7 +167,7 @@ class LayoutResolver {
                 return null
             }
             boolean braceOpener = annotated.topBefore(lineStartToken) == ('{' as char)
-            int closeAnchor = braceOpener ? bodyAnchorLine(annotated, opener) : annotated.lineOf(opener)
+            int closeAnchor = braceOpener ? bodyAnchorLine(cst, annotated, index, opener) : annotated.lineOf(opener)
             return lineIndent[closeAnchor]
         }
 
@@ -210,7 +210,7 @@ class LayoutResolver {
             // 否则方法体会比声明起始行深两级（CodeNarc 的 Indentation 会判它深 8 列）。
             // 反例：闭包做 map 值时，{ 之前那个 [ 仍然开着，此时锚点就该留在 { 所在行。
             if (brace) {
-                anchorLine = bodyAnchorLine(annotated, opener)
+                anchorLine = bodyAnchorLine(cst, annotated, index, opener)
             }
             return lineIndent[anchorLine] + (brace ? style.indentWidth : style.continuationIndent)
         }
@@ -228,21 +228,60 @@ class LayoutResolver {
      * <p>判据必须是“更早”而不是“不同”：{@code f(new Runnable() {} 里，
      * {@code {} 处的最内层是 {@code f(}，它比行首的方法体括号更【晚】，此时不该回退。
      */
-    private static int bodyAnchorLine(Annotated annotated, int braceToken) {
+    private static int bodyAnchorLine(Cst cst, Annotated annotated, ParseContextIndex index,
+            int braceToken) {
         int braceLine = annotated.lineOf(braceToken)
-        // 行首是闭合括号时【不做】回退：`} catch (...) {` 这类块边界，
-        // 它的"行首括号"是【上一个块】的 { —— 而那个 { 很可能落在续行上
-        // （例如 try-with-resources 被折行后），回退会把 catch 体的锚点带到续行的缩进上。
         int firstCode = firstCodeOfLine(annotated, braceLine)
         if (firstCode >= 0 && firstCode != braceToken
                 && startsWithCloser(annotated, firstCode)) {
             return braceLine
+        }
+        // 只对【匿名类】回退。信号在【行首 token】上（实测）：
+        //   匿名类的 { 所在行以表达式开头 -> innermost = primary；
+        //   具名类的 { 所在行以修饰符开头 -> classOrInterfaceModifier 一类。
+        if (index != null && firstCode >= 0 && firstCode != braceToken
+                && index.innermostAt(cst.tokens[firstCode].start) == 'primary') {
+            int limit = Math.max(0, braceLine - 40)
+            int k = braceLine
+            while (k > limit && !startsStatementAt(cst, annotated, index, k)) {
+                if (isClassDeclarationLine(cst, annotated, index, k)) {
+                    return braceLine
+                }
+                k--
+            }
+            if (k > limit) {
+                return k
+            }
         }
         int lineStartOpener = annotated.openerBefore(annotated.firstTokenOfLine(braceLine))
         if (lineStartOpener >= 0 && annotated.openerBefore(braceToken) < lineStartOpener) {
             return annotated.lineOf(lineStartOpener)
         }
         braceLine
+    }
+
+    /** 该行是否是一个类声明行（实测：它的 innermost 是修饰符节点）。 */
+    private static boolean isClassDeclarationLine(Cst cst, Annotated annotated,
+            ParseContextIndex index, int line) {
+        int code = firstCodeOfLine(annotated, line)
+        if (code < 0 || code >= cst.tokenCount) {
+            return false
+        }
+        String inner = index.innermostAt(cst.tokens[code].start)
+        inner == 'classOrInterfaceModifier' || inner == 'classOrInterfaceModifiersOpt'
+    }
+
+    /** 该行是否开始了一条语句（用 parse tree 问，而不是猜）。 */
+    private static boolean startsStatementAt(Cst cst, Annotated annotated,
+            ParseContextIndex index, int line) {
+        int code = firstCodeOfLine(annotated, line)
+        if (code < 0 || code >= cst.tokenCount) {
+            return false
+        }
+        int offset = cst.tokens[code].start
+        index.ruleStartsAt(offset, 'statement')
+        || index.ruleStartsAt(offset, 'localVariableDeclaration')
+        || index.ruleStartsAt(offset, 'variableDeclaration')
     }
 
     /**
