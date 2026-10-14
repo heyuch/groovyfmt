@@ -30,6 +30,9 @@ enum Slot {
     AFTER_LBRACK,
     BEFORE_RBRACK,
 
+    /** 闭包直接做第一个实参时的 { ：foo({ ... }) —— 与前面的 ( 之间不留空格。 */
+    BEFORE_CLOSURE_ARG,
+
     BEFORE_LBRACE,
     AFTER_LBRACE,
     BEFORE_RBRACE,

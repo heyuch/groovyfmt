@@ -22,6 +22,8 @@ class PunctuationSpacingRule extends MappedSpacingRule {
         m[Slot.BEFORE_COMMA] = Spacing.NONE
         m[Slot.BEFORE_SEMICOLON] = Spacing.NONE
         m[Slot.AFTER_LPAREN] = Spacing.NONE
+        // 闭包做第一个实参：foo({ ... }) 而不是 foo( { ... })
+        m[Slot.BEFORE_CLOSURE_ARG] = Spacing.NONE
         m[Slot.BEFORE_RPAREN] = Spacing.NONE
         m[Slot.AFTER_LBRACK] = Spacing.NONE
         m[Slot.BEFORE_RBRACK] = Spacing.NONE

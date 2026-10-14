@@ -167,12 +167,13 @@ class LayoutResolver {
             return lineIndent[closeAnchor]
         }
 
-        // ② 点链续行：以 . 开头的行是"语句级续行"，锚点应是语句首行，
-        //    而不是外面那个块（否则方法体里的点链会只拿到块缩进）。
-        if (annotated.role(lineStartToken) == TokenRole.DOT_LIKE) {
+        // ② 续行：以 . / 二元运算符 / 三元 ? : 开头的行是"语句级续行"，
+        //    锚点应是语句首行，而不是外面那个块 —— 否则折行的三元、&& 链、
+        //    点链都会只拿到块缩进（= 语句自身的缩进），续行缩进整个丢失。
+        if (isContinuationStart(annotated, lineStartToken)) {
             int line = annotated.lineOf(lineStartToken)
             int k = line - 1
-            while (k >= 0 && annotated.role(firstCodeOfLine(annotated, k)) == TokenRole.DOT_LIKE) {
+            while (k >= 0 && isContinuationStart(annotated, firstCodeOfLine(annotated, k))) {
                 k--
             }
             return k >= 0 ? lineIndent[k] + style.continuationIndent : null
@@ -223,6 +224,19 @@ class LayoutResolver {
             return annotated.lineOf(lineStartOpener)
         }
         braceLine
+    }
+
+    /**
+     * 该 token 是否开始"上一行表达式的续行"。
+     *
+     * <p>包括点链（{@code .foo()}）、二元运算符（{@code && x}、{@code + 1}），
+     * 以及折行三元里的 {@code ?} 与 {@code :}。这些行都不是新语句，
+     * 缩进应当是"语句首行 + 一次续行缩进"，而不是外面那个块的缩进。
+     */
+    private static boolean isContinuationStart(Annotated annotated, int token) {
+        TokenRole role = annotated.role(token)
+        role == TokenRole.DOT_LIKE || role == TokenRole.BINARY_OP
+        || role == TokenRole.COLON_TERNARY || role == TokenRole.UNARY_PREFIX
     }
 
     /** 该行的第一个代码 token（跳过空行与纯注释行）。 */

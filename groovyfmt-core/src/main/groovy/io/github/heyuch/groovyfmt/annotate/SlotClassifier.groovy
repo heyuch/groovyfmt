@@ -102,6 +102,10 @@ class SlotClassifier {
             }
             // 其余落到下面（= [ / return [ / ( [ ...）
         } else if (nt == GroovyLexer.LBRACE) {
+            if (pt == GroovyLexer.LPAREN || pt == GroovyLexer.LBRACK) {
+                // 闭包直接做第一个实参：foo({ ... }) —— ( 与 { 之间不留空格
+                return Slot.BEFORE_CLOSURE_ARG
+            }
             return Slot.BEFORE_LBRACE
         } else if (nt == GroovyLexer.COLON) {
             if (nr == TokenRole.COLON_TERNARY) {
