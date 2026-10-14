@@ -274,6 +274,8 @@ class TestMain {
      *
      * <p>这里针对的是词法判据做不到的那一条：区分「续行」与「一元加表达式语句」。
      */
+    // MethodSize：这是一组平铺的断言，拆开反而不利于对照；且属非格式化规则。
+    @SuppressWarnings('MethodSize')
     private static int[] constructIndexSuite() {
         int ok = 0
         int bad = 0
@@ -335,6 +337,68 @@ class TestMain {
                                 '}']))
         check('statement after an as-cast line is not a continuation',
                 i4 != null && i4.startsStatement(5) && !i4.isContinuation(5))
+
+        // 以下五个形态是「整体切换索引」时真实回归过的，现在逐条钉住。
+
+        // 带注解字段：FieldNode 的行号指向【注解行】，声明行不能被当成续行
+        def a1 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    @Deprecated',
+                                '    private String name',
+                                '}']))
+        check('annotated field declaration is not a continuation',
+                a1 != null && !a1.isContinuation(2))
+
+        // 带注解的局部变量：同理
+        def a2 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m() {',
+                                '        @Deprecated',
+                                '        def local = 1',
+                                '    }',
+                                '}']))
+        check('annotated local variable is not a continuation',
+                a2 != null && !a2.isContinuation(3))
+
+        // 匿名类里的方法声明：方法不是 Statement，但它是一行的开始
+        def a3 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m() {',
+                                '        def r = new Runnable() {',
+                                '            void run() {',
+                                '                println 1',
+                                '            }',
+                                '        }',
+                                '    }',
+                                '}']))
+        check('method declaration inside an anonymous class is not a continuation',
+                a3 != null && !a3.isContinuation(3))
+
+        // switch 是容器：不能当锚点，否则 case 标签会被当成续行
+        def a4 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m(x) {',
+                                '        switch (x) {',
+                                '            case 1:',
+                                '                return 1',
+                                '            case 2:',
+                                '                return 2',
+                                '        }',
+                                '    }',
+                                '}']))
+        check('case label is not a continuation',
+                a4 != null && !a4.isContinuation(5))
+
+        // 正向：字段初始化器的续行必须仍然被认为是续行
+        def a5 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    private static final String P = "a" +',
+                                '            "b"',
+                                '}']))
+        check('field initializer continuation is still a continuation',
+                a5 != null && a5.isContinuation(2))
+        check('field initializer anchor is the field line',
+                a5 != null && a5.enclosing(2) != null && a5.enclosing(2).startLine == 1)
 
         failures.each { String f -> println "  \u2717 construct index: $f" }
         [ok, bad] as int[]

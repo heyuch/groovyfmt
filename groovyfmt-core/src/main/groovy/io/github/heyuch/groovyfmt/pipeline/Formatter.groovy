@@ -2,6 +2,7 @@ package io.github.heyuch.groovyfmt.pipeline
 
 import groovy.transform.CompileStatic
 
+import io.github.heyuch.groovyfmt.annotate.ConstructIndex
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator
 import io.github.heyuch.groovyfmt.cst.Cst
 import io.github.heyuch.groovyfmt.cst.CstBuilder
@@ -68,7 +69,9 @@ class Formatter {
         }
 
         def annotated = TokenAnnotator.annotate(cst)
-        List<String> gaps = LayoutResolver.resolve(cst, annotated, registry, style, stats)
+        // 主体索引：每行属于哪个语法构造。构建失败返回 null，缩进规则会自动退回词法判据。
+        ConstructIndex index = ConstructIndex.build(pre)
+        List<String> gaps = LayoutResolver.resolve(cst, annotated, registry, style, stats, index)
 
         // 空行规范化：这是唯一会增删 token 的环节（插/删 NL token）。
         // 关掉这个能力（FormatStyle.withoutBlankLineAdjustment）就回到"绝不增删 token"的保守行为。

@@ -4,6 +4,7 @@ import groovy.transform.CompileStatic
 
 import org.apache.groovy.parser.antlr4.GroovyLexer
 
+import io.github.heyuch.groovyfmt.annotate.ConstructIndex
 import io.github.heyuch.groovyfmt.annotate.SlotClassifier
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator.Annotated
 import io.github.heyuch.groovyfmt.cst.Cst
@@ -36,22 +37,24 @@ class LayoutResolver {
     private LayoutResolver() {
     }
 
+    // ParameterCount：这里是整条管道的传递，拆成上下文对象反而看不清哪一步在用什么；属非格式化规则。
+    @SuppressWarnings('ParameterCount')
     static List<String> resolve(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, Stats stats) {
+            FormatStyle style, Stats stats, ConstructIndex index) {
         int n = cst.tokenCount
         def out = new ArrayList<String>(n + 1)
         // 按行顺序把算好的缩进记下来 —— 锚点模型要看"锚点行"的缩进，
         // 而 resolve 本来就是按 token/行顺序走的，所以边算边记即可。
         int[] lineIndent = new int[annotated.lineCount()]
         for (int g = 0; g <= n; g++) {
-            out << resolveGap(cst, annotated, registry, style, g, stats, lineIndent)
+            out << resolveGap(cst, annotated, registry, style, g, stats, lineIndent, index)
         }
         out
     }
 
     @SuppressWarnings('ParameterCount')
     private static String resolveGap(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int g, Stats stats, int[] lineIndent) {
+            FormatStyle style, int g, Stats stats, int[] lineIndent, ConstructIndex index) {
         Gap gap = cst.gaps[g]
         String original = gap.original
 
@@ -74,7 +77,7 @@ class LayoutResolver {
 
         if (annotated.isNewline(g - 1)) {
             stats.verticalGaps++
-            String indent = indentFor(cst, annotated, registry, style, g, lineIndent)
+            String indent = indentFor(cst, annotated, registry, style, g, lineIndent, index)
             if (indent != original) {
                 stats.changed++
             }
@@ -115,14 +118,14 @@ class LayoutResolver {
 
     @SuppressWarnings('ParameterCount')
     private static String indentFor(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int lineStartToken, int[] lineIndent) {
+            FormatStyle style, int lineStartToken, int[] lineIndent, ConstructIndex index) {
         if (lineStartToken >= cst.tokenCount) {
             return ''
         }
         def ctx = new IndentContext(cst, annotated, lineStartToken, style)
         int line = annotated.lineOf(lineStartToken)
 
-        Integer anchored = anchoredIndent(annotated, style, lineStartToken, lineIndent)
+        Integer anchored = anchoredIndent(annotated, style, lineStartToken, lineIndent, index)
         int columns
         if (anchored != null) {
             columns = anchored
@@ -151,8 +154,9 @@ class LayoutResolver {
      * 锚点模型：本行缩进 = 锚点行的缩进 + 一次增量。返回 {@code null} 表示没有锚点，
      * 交给原来的"规则增量求和"逻辑（顶层、以及还没建模的形态）。
      */
+    @SuppressWarnings('ParameterCount')
     private static Integer anchoredIndent(Annotated annotated, FormatStyle style,
-            int lineStartToken, int[] lineIndent) {
+            int lineStartToken, int[] lineIndent, ConstructIndex index) {
         boolean closer = startsWithCloser(annotated, lineStartToken)
         int opener = annotated.openerBefore(lineStartToken)
 
@@ -170,7 +174,14 @@ class LayoutResolver {
         // ② 续行：以 . / 二元运算符 / 三元 ? : 开头的行是"语句级续行"，
         //    锚点应是语句首行，而不是外面那个块 —— 否则折行的三元、&& 链、
         //    点链都会只拿到块缩进（= 语句自身的缩进），续行缩进整个丢失。
-        if (isContinuationLine(annotated, annotated.lineOf(lineStartToken))) {
+        // ② 续行。分工：
+        //    【肯定】续行仍然由词法判据负责（行首运算符 / 上一行以二元运算符结尾）；
+        //    【否定】交给主体索引：AST 说这一行开始了一条语句，那它就不是续行。
+        //    为什么只让它否定：实测过让它肯定会在真实代码上过度应用（CodeNarc Indentation 从 0 涨到 161）。
+        //    只减不增，风险才可控。
+        int curLine = annotated.lineOf(lineStartToken)
+        boolean indexVetoes = index != null && index.startsStatement(curLine)
+        if (!indexVetoes && isContinuationLine(annotated, curLine)) {
             int line = annotated.lineOf(lineStartToken)
             int k = line - 1
             while (k >= 0 && isContinuationLine(annotated, k)) {

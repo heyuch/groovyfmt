@@ -66,11 +66,14 @@ class ConstructIndex {
         final String kind
         final int startLine
         final int endLine
+        /** 能否当"续行锚点"。容器型（块/switch/try/循环/方法体/类体）不可以。 */
+        final boolean anchor
 
-        Span(String kind, int startLine, int endLine) {
+        Span(String kind, int startLine, int endLine, boolean anchor) {
             this.kind = kind
             this.startLine = startLine
             this.endLine = endLine
+            this.anchor = anchor
         }
 
     }
@@ -80,17 +83,20 @@ class ConstructIndex {
     private final List<Span> spans
     /** 该行是否是某条语句/声明的【起始行】。 */
     private final boolean[] statementStart
+    /** 该行只有注解（trim 后以 @ 开头）。注解行的下一行是声明起始行，不是续行。 */
+    private final boolean[] annotationOnly
     private final int lineCount
 
-    private ConstructIndex(int lineCount, List<Span> spans) {
+    private ConstructIndex(int lineCount, List<Span> spans, boolean[] annotationOnly) {
         this.lineCount = lineCount
         this.spans = spans
+        this.annotationOnly = annotationOnly
         this.innermost = new int[lineCount]
         this.statementStart = new boolean[lineCount]
         Arrays.fill(innermost, -1)
 
         // 先按区间【从大到小】铺一遍，再铺小的 —— 于是留下的就是最内层。
-        def sorted = new ArrayList<Span>(spans)
+        def sorted = new ArrayList<Span>(spans.findAll { Span sp -> sp.anchor })
         sorted.sort { Span a, Span b -> (b.endLine - b.startLine) <=> (a.endLine - a.startLine) }
         sorted.each { Span s ->
             int idx = spans.indexOf(s)
@@ -122,7 +128,7 @@ class ConstructIndex {
             for (ClassNode cn: classesOf(cu)) {
                 collector.visitClass(cn)
             }
-            new ConstructIndex(countLines(source), spans)
+            new ConstructIndex(countLines(source), spans, annotationOnlyLines(source))
         } catch (Throwable ignored) {
             null
         }
@@ -139,6 +145,16 @@ class ConstructIndex {
     private static List<ClassNode> classesOf(CompilationUnit cu) {
         List<ClassNode> out = []
         cu.ast.modules.each { m -> out.addAll(m.classes) }
+        out
+    }
+
+    /** 哪些行 trim 后以 @ 开头（= 只有注解）。 */
+    private static boolean[] annotationOnlyLines(String source) {
+        String[] lines = source.split('\n', -1)
+        boolean[] out = new boolean[lines.length]
+        for (int i = 0; i < lines.length; i++) {
+            out[i] = lines[i].trim().startsWith('@')
+        }
         out
     }
 
@@ -176,8 +192,14 @@ class ConstructIndex {
         if (startsStatement(line)) {
             return false
         }
+        if (line >= 0 && line < lineCount && annotationOnly[line]) {
+            return false                       // 注解行本身不可能是续行（注解只能附着于声明）
+        }
+        if (line > 0 && line < lineCount && annotationOnly[line - 1]) {
+            return false                       // 上一行只有注解 → 本行是声明，不是续行
+        }
         Span e = enclosing(line)
-        e != null && e.startLine < line
+        e != null && e.anchor && e.startLine < line
     }
 
     int spanCount() {
@@ -185,6 +207,18 @@ class ConstructIndex {
     }
 
     // ─────────────────── 收集：只认"表达型"语句与字段/属性 ───────────────────
+
+    /**
+     * 可以当续行锚点的构造。
+     *
+     * <p>刻意只收「表达型」语句与字段/属性：容器型的（块 / switch / try / 循环 / 方法体 / 类体）
+     * 其行区间包含了其他语句，一旦当锚点就会把它们当成续行。
+     * 条件里的换行已经由括号锚点负责，不需要这里再管。
+     */
+    private static final Set<String> ANCHOR_KINDS = [
+            'ExpressionStatement', 'ReturnStatement', 'ThrowStatement', 'AssertStatement',
+            'Field', 'Property',
+    ] as Set<String>
 
     private static final class Collector extends ClassCodeVisitorSupport {
 
@@ -200,12 +234,21 @@ class ConstructIndex {
         }
 
         private void mark(String kind, ASTNode node) {
+            markSpan(kind, node, ANCHOR_KINDS.contains(kind))
+        }
+
+        /** 只标记「这一行是某个声明的起始行」，不当锚点（方法 / 构造器 / 类）。 */
+        private void markStartOnly(String kind, ASTNode node) {
+            markSpan(kind, node, false)
+        }
+
+        private void markSpan(String kind, ASTNode node, boolean anchor) {
             int start = node.lineNumber
             int end = node.lastLineNumber
             if (start <= 0 || end <= 0 || end < start) {
                 return                   // 位置未知：宁可少记，也不记错
             }
-            out << new Span(kind, start - 1, end - 1)
+            out << new Span(kind, start - 1, end - 1, anchor)
         }
 
         @Override
@@ -282,6 +325,24 @@ class ConstructIndex {
 
         // 刻意【不覆盖】visitBlockStatement / visitEmptyStatement：
         // 块是容器，把它算成"语句"会让嵌套块里的续行锚到最外层的块上。
+
+        @Override
+        void visitMethod(org.codehaus.groovy.ast.MethodNode node) {
+            markStartOnly('Method', node)
+            super.visitMethod(node)
+        }
+
+        @Override
+        void visitConstructor(org.codehaus.groovy.ast.ConstructorNode node) {
+            markStartOnly('Constructor', node)
+            super.visitConstructor(node)
+        }
+
+        @Override
+        void visitClass(ClassNode node) {
+            markStartOnly('Class', node)
+            super.visitClass(node)
+        }
 
         @Override
         void visitField(FieldNode node) {
