@@ -7,6 +7,7 @@ import java.nio.file.Paths
 
 import groovy.transform.CompileStatic
 
+import io.github.heyuch.groovyfmt.annotate.ConstructIndex
 import io.github.heyuch.groovyfmt.layout.Stats
 import io.github.heyuch.groovyfmt.model.Slot
 import io.github.heyuch.groovyfmt.model.Spacing
@@ -241,6 +242,9 @@ class TestMain {
     private static void report(FixtureRunner.Outcome fixtures) {
         println ''
         println '══════════════════════════════════════════════════════════'
+        int[] indexResult = constructIndexSuite()
+        passed += indexResult[0]
+        failed += indexResult[1]
         println "  通过 $passed，失败 $failed"
         println "  （其中 E2E 正式 fixture ${fixtures.passed}/${fixtures.fixtureCount}" +
         (fixtures.pendingCount ? "，待实现 ${fixtures.pendingReady}/${fixtures.pendingCount}" : '') + '）'
@@ -263,6 +267,77 @@ class TestMain {
         println ''
 
         System.exit(failed == 0 ? 0 : 1)
+    }
+
+    /**
+     * 主体索引（ConstructIndex）自检：只验证它「算得对」，尚未接入任何格式化规则。
+     *
+     * <p>这里针对的是词法判据做不到的那一条：区分「续行」与「一元加表达式语句」。
+     */
+    private static int[] constructIndexSuite() {
+        int ok = 0
+        int bad = 0
+        List<String> failures = []
+
+        def probe = { List<String> lines -> lines.join('\n') + '\n' }
+
+        def check = { String name, boolean cond ->
+            if (cond) {
+                ok++
+            } else {
+                bad++
+                failures << name
+            }
+        }
+
+        def i1 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m(a, b) {',
+                                '        def s = a +',
+                                '                b',
+                                '    }',
+                                '}']))
+        check('continuation line does not start a statement', i1 != null && !i1.startsStatement(3))
+        check('continuation line is covered by a statement', i1 != null && i1.isContinuation(3))
+        check('continuation anchor is the statement start line',
+                i1 != null && i1.enclosing(3) != null && i1.enclosing(3).startLine == 2)
+
+        // 关键区分：`+ b` 是一条独立的一元加表达式语句，不是续行。
+        def i2 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m(a, b) {',
+                                '        def s = a',
+                                '        + b',
+                                '    }',
+                                '}']))
+        check('unary plus line starts a statement', i2 != null && i2.startsStatement(3))
+        check('unary plus line is not a continuation', i2 != null && !i2.isContinuation(3))
+
+        def i3 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m() {',
+                                '        def c = { a, b ->',
+                                '            println a',
+                                '        }',
+                                '    }',
+                                '}']))
+        check('closure body first line is not a continuation',
+                i3 != null && i3.startsStatement(3) && !i3.isContinuation(3))
+
+        def i4 = ConstructIndex.build(probe([
+                                'class A {',
+                                '    void m(l) {',
+                                '        Set<String> s = l.collect {',
+                                '            f(it)',
+                                '        } as Set<String>',
+                                '        g(s)',
+                                '    }',
+                                '}']))
+        check('statement after an as-cast line is not a continuation',
+                i4 != null && i4.startsStatement(5) && !i4.isContinuation(5))
+
+        failures.each { String f -> println "  \u2717 construct index: $f" }
+        [ok, bad] as int[]
     }
 
 }
