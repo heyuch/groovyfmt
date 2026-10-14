@@ -159,7 +159,12 @@ class LayoutResolver {
         // ① 闭合行：对齐"打开被闭合括号的那一行"。
         //    必须排在最前 —— 否则 case 规则会把 switch 的 } 也当成 case 体。
         if (closer) {
-            return opener >= 0 ? lineIndent[annotated.lineOf(opener)] : null
+            if (opener < 0) {
+                return null
+            }
+            boolean braceOpener = annotated.topBefore(lineStartToken) == ('{' as char)
+            int closeAnchor = braceOpener ? bodyAnchorLine(annotated, opener) : annotated.lineOf(opener)
+            return lineIndent[closeAnchor]
         }
 
         // ② 点链续行：以 . 开头的行是"语句级续行"，锚点应是语句首行，
@@ -185,11 +190,39 @@ class LayoutResolver {
 
         // ④ 括号锚点：最内层未闭合括号的打开行 + 一次增量
         if (opener >= 0) {
-            int anchorLine = annotated.lineOf(opener)
             boolean brace = annotated.topBefore(lineStartToken) == ('{' as char)
+            int anchorLine = annotated.lineOf(opener)
+            // 花括号体的锚点校正：若"锚点行开头处未闭合的那个括号"在 { 之前就已经闭合了，
+            // 说明这个 { 是【跨行声明的体】（典型：多行参数列表的方法），
+            // 锚点必须回到打开那个括号的行（= 声明起始行），而不是 { 所在的续行 ——
+            // 否则方法体会比声明起始行深两级（CodeNarc 的 Indentation 会判它深 8 列）。
+            // 反例：闭包做 map 值时，{ 之前那个 [ 仍然开着，此时锚点就该留在 { 所在行。
+            if (brace) {
+                anchorLine = bodyAnchorLine(annotated, opener)
+            }
             return lineIndent[anchorLine] + (brace ? style.indentWidth : style.continuationIndent)
         }
         null
+    }
+
+    /**
+     * 花括号体的真正锚点行。
+     *
+     * <p>通常就是 {@code {} 所在行。但如果那一行的<b>行首括号在 {@code {} 之前就已经被弹出</b>
+     * （即 {@code {} 处的最内层括号比行首那个更早），说明这是一个【跨行声明的体】——
+     * 典型是多行参数列表的方法声明。此时锚点必须回到打开那个括号的行（= 声明起始行），
+     * 否则方法体会比声明起始行深两级（CodeNarc 的 Indentation 会判它深 8 列）。
+     *
+     * <p>判据必须是“更早”而不是“不同”：{@code f(new Runnable() {} 里，
+     * {@code {} 处的最内层是 {@code f(}，它比行首的方法体括号更【晚】，此时不该回退。
+     */
+    private static int bodyAnchorLine(Annotated annotated, int braceToken) {
+        int braceLine = annotated.lineOf(braceToken)
+        int lineStartOpener = annotated.openerBefore(annotated.firstTokenOfLine(braceLine))
+        if (lineStartOpener >= 0 && annotated.openerBefore(braceToken) < lineStartOpener) {
+            return annotated.lineOf(lineStartOpener)
+        }
+        braceLine
     }
 
     /** 该行的第一个代码 token（跳过空行与纯注释行）。 */
