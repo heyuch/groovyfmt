@@ -8,6 +8,7 @@ import java.nio.file.Paths
 import groovy.transform.CompileStatic
 
 import io.github.heyuch.groovyfmt.annotate.ConstructIndex
+import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.layout.Stats
 import io.github.heyuch.groovyfmt.model.Slot
 import io.github.heyuch.groovyfmt.model.Spacing
@@ -242,6 +243,9 @@ class TestMain {
     private static void report(FixtureRunner.Outcome fixtures) {
         println ''
         println '══════════════════════════════════════════════════════════'
+        int[] parseResult = parseContextSuite()
+        passed += parseResult[0]
+        failed += parseResult[1]
         int[] indexResult = constructIndexSuite()
         passed += indexResult[0]
         failed += indexResult[1]
@@ -401,6 +405,90 @@ class TestMain {
                 a5 != null && a5.enclosing(2) != null && a5.enclosing(2).startLine == 1)
 
         failures.each { String f -> println "  \u2717 construct index: $f" }
+        [ok, bad] as int[]
+    }
+
+    /**
+     * 语法上下文索引（ParseContextIndex）自检。
+     *
+     * <p>这十几条正是我们历史上靠 token 贴邻猜错过的判断；
+     * 现在它们由 parse tree 的规则名直接回答，成为后续迁移的契约。
+     */
+    @SuppressWarnings(['MethodSize', 'AbcMetric'])
+    private static int[] parseContextSuite() {
+        int ok = 0
+        int bad = 0
+        List<String> failures = []
+
+        def check = { String name, boolean cond ->
+            if (cond) {
+                ok++
+            } else {
+                bad++
+                failures << name
+            }
+        }
+
+        String s1 = 'class A { Class<? extends T> m() { null } }'
+        def i1 = ParseContextIndex.build(s1)
+        check('generic wildcard ? is inside typeArguments',
+                i1 != null && i1.insideAt(s1.indexOf('?'), 'typeArguments'))
+
+        String s2 = 'class A { void m(a, b, c) { def x = a ? b : c } }'
+        def i2 = ParseContextIndex.build(s2)
+        check('ternary ? is NOT inside typeArguments',
+                i2 != null && !i2.insideAt(s2.indexOf('?'), 'typeArguments'))
+        check('ternary colon is NOT a mapEntry',
+                i2 != null && !i2.insideAt(s2.indexOf(':'), 'mapEntry'))
+
+        String s3 = 'class A { void m(xs) { for (x : xs) { println x } } }'
+        def i3 = ParseContextIndex.build(s3)
+        int c3 = s3.indexOf(':')
+        check('for-in colon is inside enhancedForControl',
+                i3 != null && i3.insideAt(c3, 'enhancedForControl'))
+        check('for-in colon is NOT a mapEntry',
+                i3 != null && !i3.insideAt(c3, 'mapEntry'))
+
+        String s4 = 'class A { void m() { def m = [a: 1] } }'
+        def i4 = ParseContextIndex.build(s4)
+        check('map colon IS a mapEntry',
+                i4 != null && i4.insideAt(s4.indexOf(':'), 'mapEntry'))
+
+        String s5 = 'class A { void m() { } }'
+        def i5 = ParseContextIndex.build(s5)
+        int b1 = s5.indexOf('{')
+        int b2 = s5.indexOf('{', b1 + 1)
+        check('class body brace is classBody',
+                i5 != null && i5.innermostAt(b1) == 'classBody')
+        check('method body brace is inside methodBody',
+                i5 != null && i5.insideAt(b2, 'methodBody'))
+
+        String s6 = 'class A { void m() { def c = { println 1 } } }'
+        def i6 = ParseContextIndex.build(s6)
+        int b3 = s6.indexOf('{', s6.indexOf('{', s6.indexOf('{') + 1) + 1)
+        check('closure brace is inside closure',
+                i6 != null && i6.insideAt(b3, 'closure'))
+
+        String s7 = 'class A { void m() { def s = a[i] } }'
+        def i7 = ParseContextIndex.build(s7)
+        check('subscript is inside indexPropertyArgs',
+                i7 != null && i7.insideAt(s7.indexOf('['), 'indexPropertyArgs'))
+
+        String s8 = 'class A { void m() { def s = a\n        + b } }'
+        def i8 = ParseContextIndex.build(s8)
+        int p8 = s8.indexOf('+ b')
+        check('unary plus line STARTS a statement',
+                i8 != null && i8.ruleStartsAt(p8, 'statement'))
+
+        String s9 = 'class A { void m() { def s = a +\n        b } }'
+        def i9 = ParseContextIndex.build(s9)
+        int b9 = s9.indexOf('b }')
+        check('continuation operand does NOT start a statement',
+                i9 != null && !i9.ruleStartsAt(b9, 'statement'))
+        check('continuation operand stays inside the declaration',
+                i9 != null && i9.insideAt(b9, 'localVariableDeclaration'))
+
+        failures.each { String f -> println "  \u2717 parse context: $f" }
         [ok, bad] as int[]
     }
 
