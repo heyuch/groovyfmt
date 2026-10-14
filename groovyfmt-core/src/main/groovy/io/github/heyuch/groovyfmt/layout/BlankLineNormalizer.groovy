@@ -82,18 +82,194 @@ class BlankLineNormalizer {
         new Result(outToks, outGaps)
     }
 
-    private static int desiredNewlineCount(Cst cst, int s, int e, int actual, FormatStyle style) {
+    @SuppressWarnings('ParameterCount')
+    private static int desiredNewlineCount(Cst cst, int s, int e,
+            int actual, FormatStyle style) {
+        int prev = s - 1
+        int next = e + 1
         int minBlankLines = 0
-        if (s > 0 && isClassBodyOpen(cst, s - 1)) {
+        int maxBlankLines = style.maxBlankLines
+
+        // ① 类体边界：我们自己的风格要求有且只有这么多空行
+        if (prev >= 0 && isClassBodyOpen(cst, prev)) {
             minBlankLines = Math.max(minBlankLines, style.blankLinesAfterClassOpen)
         }
-        int next = e + 1
         if (next < cst.tokenCount && isClassBodyClose(cst, next)) {
             minBlankLines = Math.max(minBlankLines, style.blankLinesBeforeClassClose)
         }
-        int maxBlankLines = Math.max(style.maxBlankLines, minBlankLines)
-        int desired = Math.min(actual, maxBlankLines + 1)
+
+        // ② CodeNarc BlockStartsWithBlankLine / BlockEndsWithBlankLine：
+        //    非类体的块（方法体 / 闭包 / if / try ...）首尾【禁止】空行。
+        //    类体是例外（CodeNarc 对类单独用 ClassStarts/EndsWithBlankLine，
+        //    而它在 formatting 规则集里默认不启用），所以这里要把类体排除掉。
+        if (prev >= 0 && isPlainBlockOpen(cst, prev)) {
+            maxBlankLines = 0
+        }
+        if (next < cst.tokenCount && isPlainBlockClose(cst, next)) {
+            maxBlankLines = 0
+        }
+
+        // ③ CodeNarc MissingBlankLineAfterPackage / MissingBlankLineAfterImports：
+        //    package 之后、以及 import 块结束之后必须有且至少一个空行。
+        if (prev >= 0 && endsPackageOrImportBlock(cst, prev)) {
+            minBlankLines = Math.max(minBlankLines, 1)
+        }
+
+        // ④ CodeNarc MissingBlankLineBeforeAnnotatedField：
+        //    带注解的【字段】声明之前必须有空行。
+        if (next < cst.tokenCount && startsAnnotatedField(cst, next)) {
+            minBlankLines = Math.max(minBlankLines, 1)
+        }
+
+        int limit = Math.max(maxBlankLines, minBlankLines)
+        int desired = Math.min(actual, limit + 1)
         Math.max(desired, minBlankLines + 1)
+    }
+
+    /** 非类体的左花括号：方法体 / 闭包 / 控制块。GString 插值的 { 也排除。 */
+    private static boolean isPlainBlockOpen(Cst cst, int braceIndex) {
+        if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
+            return false
+        }
+        CstToken t = cst.tokens[braceIndex]
+        if (t.type != GroovyLexer.LBRACE || t.comment || isGStringToken(t.type)) {
+            return false
+        }
+        !isClassBodyOpen(cst, braceIndex)
+    }
+
+    /** 与 isPlainBlockOpen 配对的右花括号。 */
+    private static boolean isPlainBlockClose(Cst cst, int braceIndex) {
+        if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
+            return false
+        }
+        if (cst.tokens[braceIndex].type != GroovyLexer.RBRACE
+                || cst.tokens[braceIndex].comment || isGStringToken(cst.tokens[braceIndex].type)) {
+            return false
+        }
+        !isClassBodyClose(cst, braceIndex)
+    }
+
+    /**
+     * 该 token 是否是一条 package 语句或【整个 import 块】的最后一个 token。
+     *
+     * <p>import 块的中途不要求空行，只要求块结束后有 —— 所以还要看后面那条语句
+     * 是不是 import/package。
+     */
+    private static boolean endsPackageOrImportBlock(Cst cst, int prev) {
+        int start = statementStart(cst, prev)
+        if (start < 0) {
+            return false
+        }
+        int head = cst.tokens[start].type
+        if (head == GroovyLexer.PACKAGE) {
+            return true
+        }
+        if (head != GroovyLexer.IMPORT) {
+            return false
+        }
+        int after = statementStart(cst, prev + 1)
+        if (after <= prev) {
+            return true
+        }
+        int nextHead = cst.tokens[after].type
+        nextHead != GroovyLexer.IMPORT && nextHead != GroovyLexer.PACKAGE
+    }
+
+    /** 从 index 向前找它所在语句的第一个代码 token（跨过换行即停）。 */
+    private static int statementStart(Cst cst, int index) {
+        if (index < 0 || index >= cst.tokenCount) {
+            return -1
+        }
+        for (int j = index; j >= 0; j--) {
+            CstToken t = cst.tokens[j]
+            if (t.comment) {
+                continue
+            }
+            if (t.type == GroovyLexer.NL) {
+                return j + 1 < cst.tokenCount ? j + 1 : -1
+            }
+        }
+        0
+    }
+
+    /**
+     * 该 token 是否开始一个【带注解的字段】声明。
+     *
+     * <p>刻意保守：跳过注解之后，只有当这一行既没有 {@code (}（方法）也没有
+     * {@code class/def/...} 之类的声明头，才认定为字段。
+     */
+    // CyclomaticComplexity：这里是一段纯词法判定，"跳过注解再看声明本体"这件事
+    // 天然分支多；拆成多个方法反而看不出顺序。属非格式化规则，带理由豁免。
+    @SuppressWarnings('CyclomaticComplexity')
+    private static boolean startsAnnotatedField(Cst cst, int index) {
+        if (index < 0 || index >= cst.tokenCount || cst.tokens[index].type != GroovyLexer.AT) {
+            return false
+        }
+        int j = index
+        // 跳过连续的注解：@Name / @Name(...) / @a.b.Name(...)
+        while (j < cst.tokenCount && cst.tokens[j].type == GroovyLexer.AT) {
+            j++
+            int depth = 0
+            while (j < cst.tokenCount) {
+                CstToken t = cst.tokens[j]
+                if (t.comment) {
+                    j++
+                    continue
+                }
+                int type = t.type
+                if (type == GroovyLexer.NL) {
+                    break
+                }
+                if (type == GroovyLexer.LPAREN) {
+                    depth++
+                } else if (type == GroovyLexer.RPAREN) {
+                    depth--
+                    if (depth == 0) {
+                        j++
+                        break
+                    }
+                } else if (depth == 0 && type != GroovyLexer.DOT
+                        && type != GroovyLexer.Identifier
+                        && type != GroovyLexer.CapitalizedIdentifier) {
+                    // 注意：注解名（@Deprecated）在 Groovy 词法里是独立的
+                    // CapitalizedIdentifier token，不认它就会把注解名当成"声明本体"，
+                    // 于是 @Deprecated 后面跟 class 也会被误判成字段。
+                    break
+                }
+                j++
+            }
+            while (j < cst.tokenCount && cst.tokens[j].comment) {
+                j++
+            }
+        }
+        // 注解经常单独占一行，所以先跨过注解后面的换行与注释，再看声明本体。
+        int k = j
+        while (k < cst.tokenCount
+                && (cst.tokens[k].comment || cst.tokens[k].type == GroovyLexer.NL)) {
+            k++
+        }
+        boolean sawDeclarationToken = false
+        for (; k < cst.tokenCount; k++) {
+            CstToken t = cst.tokens[k]
+            if (t.comment) {
+                continue
+            }
+            int type = t.type
+            if (type == GroovyLexer.NL) {
+                return sawDeclarationToken     // 声明行结束 → 是字段
+            }
+            sawDeclarationToken = true
+            if (type == GroovyLexer.LPAREN) {
+                return false                   // 方法
+            }
+            if (type == GroovyLexer.LBRACE || type == GroovyLexer.CLASS
+                    || type == GroovyLexer.INTERFACE || type == GroovyLexer.ENUM
+                    || type == GroovyLexer.TRAIT || type == GroovyLexer.DEF) {
+                return false
+            }
+        }
+        false
     }
 
     // ─────────────────────── 类体花括号的识别 ───────────────────────
