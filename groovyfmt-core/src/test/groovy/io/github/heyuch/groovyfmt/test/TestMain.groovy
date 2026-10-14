@@ -69,7 +69,11 @@ class TestMain {
             println line
         }
         println '  ─────'
-        println "  共 ${outcome.fixtureCount} 个 fixture，通过 ${outcome.passed}，失败 ${outcome.failed}"
+        println "  正式 fixture ${outcome.fixtureCount} 个：通过 ${outcome.passed}，失败 ${outcome.failed}"
+        if (outcome.pendingCount > 0) {
+            println "  待实现 fixture ${outcome.pendingCount} 个：已通过 ${outcome.pendingReady}" +
+            '（目标行为已固化，不参与失败判定）'
+        }
         passed += outcome.passed
         failed += outcome.failed
         FAILURES.addAll(outcome.failures)
@@ -238,7 +242,8 @@ class TestMain {
         println ''
         println '══════════════════════════════════════════════════════════'
         println "  通过 $passed，失败 $failed"
-        println "  （其中 E2E fixture ${fixtures.passed}/${fixtures.fixtureCount}）"
+        println "  （其中 E2E 正式 fixture ${fixtures.passed}/${fixtures.fixtureCount}" +
+        (fixtures.pendingCount ? "，待实现 ${fixtures.pendingReady}/${fixtures.pendingCount}" : '') + '）'
         if (FAILURES) {
             println '  失败明细:'
             FAILURES.each { String f -> println "    - $f" }

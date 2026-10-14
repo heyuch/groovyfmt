@@ -19,13 +19,24 @@ import io.github.heyuch.groovyfmt.pipeline.Formatter
  *   fixtures/&lt;group&gt;/&lt;name&gt;.groovy                 输入
  *   fixtures/&lt;group&gt;/&lt;name&gt;.expected.groovy          期望输出（可省）
  *   fixtures/&lt;group&gt;/&lt;name&gt;.invalid.groovy           必须被安全闸门拒绝
+ *
+ *   fixtures/pending/&lt;name&gt;.groovy                  同上，但属于【目标行为尚未实现】
  * </pre>
  *
  * <ul>
  *   <li>有 {@code .expected.groovy} → 断言 {@code format(输入) == 期望}</li>
  *   <li>没有 → 断言 {@code format(输入) == 输入}（"必须保持不变"的用例，占一半以上）</li>
  *   <li>{@code .invalid.groovy} → 断言被拒绝、且原样返回</li>
+ *   <li>{@code pending/} → 期望值固化的是<b>目标行为</b>；不一致<b>不算失败</b>，
+ *       只报告进度。语义不变式（无损 / token / 语法树 / 幂等）<b>仍然强制</b> ——
+ *       真 bug 不会被 "pending" 掩盖。</li>
  * </ul>
+ *
+ * <h3>为什么需要 pending 目录</h3>
+ * 先固化目标行为、再决定实现，比反过来安全。但直接把它写进正式 fixture 会让构建一直红着，
+ * 于是 CI 失去意义；写成"当前行为"又会把 bug 固化成期望。
+ * pending 就是这两种坏选择的第三条路：<b>期望是目标，构建保持绿，差距被计数并打印</b>。
+ * 某个 pending 用例通过后，把它移到正式目录即可。
  *
  * <h3>为什么每个 fixture 都要额外跑一组不变式</h3>
  * 因为 golden 测试单独用有两个隐蔽的失效模式：
@@ -43,21 +54,36 @@ import io.github.heyuch.groovyfmt.pipeline.Formatter
  * 用 {@code ./gradlew updateFixtures}（= {@code -Dgroovyfmt.updateFixtures=true}）。
  * 注意：<b>只更新已存在的 .expected 文件</b>；本来没有期望文件却发生了变化，
  * 一律报错而不是自动生成 —— 否则一次盲目的 bless 就会把 bug 固化成"期望"。
+ * 也<b>不会</b>碰 pending 目录：那里的期望是手写的目标，不该被当前实现覆盖。
  */
 @CompileStatic
 class FixtureRunner {
 
     static final String UPDATE_PROPERTY = 'groovyfmt.updateFixtures'
 
+    /** 目录名：这里的 fixture 固化的是目标行为，尚未实现，因此不参与失败判定。 */
+    static final String PENDING_DIR = 'pending'
+
     /** 每个 fixture 最多展示几行差异，避免刷屏。 */
     private static final int MAX_DIFF_LINES = 8
+
+    private enum Status {
+
+        PASS, PENDING, READY, FAIL
+
+    }
 
     static final class Outcome {
 
         int passed
         int failed
         int updated
+        /** 正式（非 pending）fixture 数 */
         int fixtureCount
+        /** pending fixture 数 */
+        int pendingCount
+        /** pending 里已经能通过的（可以提升为正式 fixture） */
+        int pendingReady
         final List<String> failures = []
         final Stats aggregate = new Stats()
         final Map<String, int[]> perGroup = new LinkedHashMap<String, int[]>()
@@ -87,21 +113,45 @@ class FixtureRunner {
             }
         }
         fixtures.sort { it.path }
-        outcome.fixtureCount = fixtures.size()
 
+        boolean pendingMode = false
         fixtures.each { File fixture ->
-            String relative = root.toFile().toPath().relativize(fixture.toPath())
-            String group = relative.contains(File.separator) ?
-            relative.substring(0, relative.indexOf(File.separator)) : '(root)'
-            boolean ok = fixture.name.endsWith('.invalid.groovy') ?
-            checkInvalid(fixture, relative, formatter) :
-            checkGolden(fixture, relative, formatter, outcome, update)
-            def counter = outcome.group(group)
-            counter[ok ? 0 : 1]++
-            if (ok) {
-                outcome.passed++
+            String relative = root.toFile().toPath().relativize(fixture.toPath()) as String
+            boolean pending = relative.startsWith(PENDING_DIR + File.separator)
+            if (pending) {
+                if (!pendingMode) {
+                    println '  ── 待实现（固化目标行为，不参与失败判定）' + '─'.repeat(10)
+                    pendingMode = true
+                }
+                outcome.pendingCount++
             } else {
+                outcome.fixtureCount++
+            }
+
+            String group = pending ? PENDING_DIR :
+            (relative.contains(File.separator) ?
+                    relative.substring(0, relative.indexOf(File.separator)) : '(root)')
+
+            Status status = fixture.name.endsWith('.invalid.groovy') ?
+            (checkInvalid(fixture, relative, formatter) ? Status.PASS : Status.FAIL) :
+            checkGolden(fixture, relative, formatter, outcome, update, pending)
+
+            if (pending) {
+                if (status == Status.READY) {
+                    outcome.pendingReady++
+                    println "  ★ $relative 已通过 —— 可以移到正式目录了"
+                }
+                // pending 用例的金色比对不算失败；但语义不变式违规仍然算
+                if (status == Status.FAIL) {
+                    outcome.failed++
+                    outcome.group(group)[1]++
+                }
+            } else if (status == Status.FAIL) {
                 outcome.failed++
+                outcome.group(group)[1]++
+            } else {
+                outcome.passed++
+                outcome.group(group)[0]++
             }
         }
         outcome
@@ -109,8 +159,11 @@ class FixtureRunner {
 
     // ─────────────────────────── 正常 fixture ───────────────────────────
 
-    private static boolean checkGolden(File fixture, String label, Formatter formatter,
-            Outcome outcome, boolean update) {
+    // AbcMetric/ParameterCount：这个方法是"一个 fixture 的完整判定流程"，
+    // 四道检查 + pending 分支堆在一起，拆开反而看不出顺序与依赖。
+    @SuppressWarnings(['AbcMetric', 'ParameterCount'])
+    private static Status checkGolden(File fixture, String label, Formatter formatter,
+            Outcome outcome, boolean update, boolean pending) {
         String input = fixture.getText('UTF-8')
         File expectedFile = expectedFileFor(fixture)
         boolean hasExpected = expectedFile.file
@@ -120,7 +173,8 @@ class FixtureRunner {
 
         // ① 最重要的一条：必须是"真的格式化了"，而不是"被安全闸门拒绝了"
         if (r.skipped) {
-            return fail(outcome, label, "被安全闸门跳过（golden 测试会因此静默失效）: ${r.skipReason}")
+            fail(outcome, label, "被安全闸门跳过（golden 测试会因此静默失效）: ${r.skipReason}")
+            return Status.FAIL
         }
         outcome.aggregate.horizontalGaps += r.stats.horizontalGaps
         outcome.aggregate.classified += r.stats.classified
@@ -129,47 +183,67 @@ class FixtureRunner {
 
         // ② golden 比对
         if (r.output != expected) {
+            if (pending) {
+                // 目标行为尚未实现：只报告进度，不判失败
+                println "  ⏳ $label"
+                lineDiff(expected, r.output).readLines().each { String line ->
+                    println "      $line"
+                }
+                return Status.PENDING
+            }
             String problem = hasExpected ?
             '输出与 .expected.groovy 不一致' :
             '输出发生了变化，但这个 fixture 声称"必须保持不变"'
             if (update && hasExpected) {
                 expectedFile.setText(r.output, 'UTF-8')
                 outcome.updated++
-                true
+                return Status.PASS
             }
             String hint = hasExpected ?
             '（若这是预期内的规则变更：./gradlew updateFixtures 后审查 diff）' :
             '（若这个变化是对的：给它补一个 .expected.groovy）'
-            return fail(outcome, label, "$problem $hint\n${lineDiff(expected, r.output)}")
+            fail(outcome, label, "$problem $hint\n${lineDiff(expected, r.output)}")
+            return Status.FAIL
         }
 
-        // ③ 语义不变式（与 golden 相互独立的判据）
+        // ③ 语义不变式（与 golden 相互独立的判据）——对 pending 同样强制，真 bug 不该被掩盖
         try {
             Cst in = CstBuilder.build(input)
             Cst out = CstBuilder.build(r.output)
             if (!in.lossless || !out.lossless) {
-                return fail(outcome, label, '无损断言失败')
+                fail(outcome, label, '无损断言失败')
+                return Status.FAIL
             }
             // 用【规范化】形式比对：空行规范化会增删 NL token，
             // 所以唯一允许的 token 级差异就是空行的个数（见 Cst#canonicalTokenFingerprint）。
             if (in.canonicalTokenFingerprint() != out.canonicalTokenFingerprint()) {
-                return fail(outcome, label, "token 序列变了: ${in.firstTokenDifference(out)}")
+                fail(outcome, label, "token 序列变了: ${in.firstTokenDifference(out)}")
+                return Status.FAIL
             }
             if (CstBuilder.treeShapeOnly(in.canonicalText()) !=
                     CstBuilder.treeShapeOnly(out.canonicalText())) {
-                return fail(outcome, label, '语法树形状变了（语义可能已经改变）')
+                fail(outcome, label, '语法树形状变了（语义可能已经改变）')
+                return Status.FAIL
             }
         } catch (GroovySyntaxException e) {
-            return fail(outcome, label, "重新解析失败: ${e.message}")
+            fail(outcome, label, "重新解析失败: ${e.message}")
+            return Status.FAIL
         }
 
         // ④ 幂等：断言【期望输出】本身是稳定不动点（比 format(format(x)) 更强）
         FormatResult again = formatter.format(expected)
         if (again.skipped || again.output != expected) {
-            return fail(outcome, label,
+            if (pending) {
+                // 期望输出自己不是不动点 —— 说明期望写错了，这要报出来
+                fail(outcome, label,
+                        "期望输出不是幂等不动点${again.skipped ? '（被跳过）' : ''}\n${lineDiff(expected, again.output)}")
+                return Status.FAIL
+            }
+            fail(outcome, label,
                     "期望输出不是幂等不动点${again.skipped ? '（被跳过）' : ''}\n${lineDiff(expected, again.output)}")
+            return Status.FAIL
         }
-        true
+        pending ? Status.READY : Status.PASS
     }
 
     // ─────────────────────────── 必须被拒绝 ───────────────────────────
@@ -181,7 +255,7 @@ class FixtureRunner {
             return fail(null, label, formatResultReport(r))
         }
         if (r.output != input) {
-            return fail(null, label, '被拒绝了，但没有原样返回输入')
+            return fail(null, label, '被拒绝了，但原样返回输入')
         }
         true
     }
