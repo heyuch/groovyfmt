@@ -230,6 +230,14 @@ class LayoutResolver {
      */
     private static int bodyAnchorLine(Annotated annotated, int braceToken) {
         int braceLine = annotated.lineOf(braceToken)
+        // 行首是闭合括号时【不做】回退：`} catch (...) {` 这类块边界，
+        // 它的"行首括号"是【上一个块】的 { —— 而那个 { 很可能落在续行上
+        // （例如 try-with-resources 被折行后），回退会把 catch 体的锚点带到续行的缩进上。
+        int firstCode = firstCodeOfLine(annotated, braceLine)
+        if (firstCode >= 0 && firstCode != braceToken
+                && startsWithCloser(annotated, firstCode)) {
+            return braceLine
+        }
         int lineStartOpener = annotated.openerBefore(annotated.firstTokenOfLine(braceLine))
         if (lineStartOpener >= 0 && annotated.openerBefore(braceToken) < lineStartOpener) {
             return annotated.lineOf(lineStartOpener)
