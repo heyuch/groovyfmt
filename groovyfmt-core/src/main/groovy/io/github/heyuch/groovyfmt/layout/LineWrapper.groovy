@@ -161,7 +161,8 @@ class LineWrapper {
     private static final int PRIO_ASSIGNMENT = 0
     private static final int PRIO_COMMA = 1
     private static final int PRIO_TERNARY = 2
-    private static final int PRIO_DOT = 3
+    private static final int PRIO_OPERATOR = 3
+    private static final int PRIO_DOT = 4
 
     private static final String OP_CHARS = '=+-*/%&|^<>?!'
 
@@ -202,7 +203,18 @@ class LineWrapper {
                 } else if (c == (')' as char) || c == (']' as char) || c == ('}' as char)) {
                     depth = Math.max(0, depth - 1)
                 } else if (c == (',' as char)) {
-                    addBreak(out, i + 1, depth, PRIO_COMMA, lineOffset, index)
+                    // 泛型参数表里的逗号不能断：会把 Map<String, String> 切开。
+                    if (index == null || !index.insideAt(lineOffset + i, 'typeArguments')) {
+                        addBreak(out, i + 1, depth, PRIO_COMMA, lineOffset, index)
+                    }
+                } else if (isBinaryOperatorAt(line, i)) {
+                    int length = binaryOperatorLength(line, i)
+                    // 只在嵌套深度 0 的语句级表达式上断，且断在运算符之后。
+                    if (depth == 0
+                            && (index == null || !index.insideAt(lineOffset + i, 'typeArguments'))) {
+                        addBreak(out, i + length, depth, PRIO_OPERATOR, lineOffset, index)
+                    }
+                    i += length - 1
                 } else if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
                     int prio = c == ('.' as char) ? PRIO_DOT : PRIO_TERNARY
                     // 不允许在链的【头部】断开：前缀里必须已经出现过 . ( ) ]，
@@ -238,6 +250,39 @@ class LineWrapper {
     /** 加入一个候选，但先过掉两类语境：闭包内、for 头内。 */
     // ParameterCount：就是一个候选的接入口（位置/深度/优先级 + 行住置 + 索引），
     // 打包成对象反而多一层间接；属非格式化规则。
+    /** 这里是否是可断行的【二元】运算符（前一个有效字符能结束操作数）。 */
+    private static boolean isBinaryOperatorAt(String line, int i) {
+        binaryOperatorLength(line, i) > 0
+    }
+
+    /** 二元运算符长度；0 表示不是。一元 +/- 不算。 */
+    private static int binaryOperatorLength(String line, int i) {
+        String[] ops = ['>>>', '>>=', '<<=', '===', '!==', '<=>', '**=', '&&', '||', '==', '!=',
+                '<=', '>=', '<<', '>>', '+=', '-=', '*=', '/=', '%=', '+', '-', '*', '/',
+                '%', '<', '>']
+        String rest = line.substring(i)
+        for (String op: ops) {
+            if (rest.startsWith(op) && endsOperand(line, i)) {
+                return op.length()
+            }
+        }
+        0
+    }
+
+    /** {@code i} 之前最后一个非空字符是否能结束一个操作数。 */
+    private static boolean endsOperand(String line, int i) {
+        int j = i - 1
+        while (j >= 0 && Character.isWhitespace(line.charAt(j))) {
+            j--
+        }
+        if (j < 0) {
+            return false
+        }
+        char c = line.charAt(j)
+        Character.isLetterOrDigit(c) || c == ('_' as char) || c == (')' as char)
+        || c == (']' as char) || c == ('\'' as char) || c == ('"' as char)
+    }
+
     @SuppressWarnings('ParameterCount')
     private static void addBreak(List<BreakPoint> out, int position, int depth, int priority,
             int lineOffset, ParseContextIndex index) {
