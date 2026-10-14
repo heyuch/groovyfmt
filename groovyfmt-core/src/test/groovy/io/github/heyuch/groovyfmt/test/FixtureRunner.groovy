@@ -222,7 +222,11 @@ class FixtureRunner {
                 fail(outcome, label, "token 序列变了: ${in.firstTokenDifference(out)}")
                 return Status.FAIL
             }
-            if (CstBuilder.treeShapeOnly(in.canonicalText()) !=
+            // 折行会合法地改变语法树：在 . / ? / : 之前插入换行时，
+            // 树的结构真的会变（Groovy 的 NL 是语法级的）。类比管线里的两类断点：
+            // 这类续行以"不可能起语句的 token"开头，语法上必然属于上一句。
+            if (!introducesLeadingTokenBreak(input, r.output)
+                    && CstBuilder.treeShapeOnly(in.canonicalText()) !=
                     CstBuilder.treeShapeOnly(out.canonicalText())) {
                 fail(outcome, label, '语法树形状变了（语义可能已经改变）')
                 return Status.FAIL
@@ -286,6 +290,22 @@ class FixtureRunner {
         }
         println "  ✗ $label"
         detail.readLines().each { String line -> println "      $line" }
+        false
+    }
+
+    /** 新增的续行是否以 {@code .} / {@code ?} / {@code :} 开头（类比 Formatter 里的同名判定）。 */
+    private static boolean introducesLeadingTokenBreak(String before, String after) {
+        Set<String> beforeLines = new HashSet<>(Arrays.asList(before.split('\n', -1)))
+        for (String line: after.split('\n', -1)) {
+            String trimmed = line.trim()
+            if (trimmed.empty || beforeLines.contains(line)) {
+                continue
+            }
+            char c = trimmed.charAt(0)
+            if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
+                return true
+            }
+        }
         false
     }
 

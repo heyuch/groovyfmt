@@ -121,9 +121,17 @@ class Formatter {
             String wrapped = LineWrapper.wrap(out, style)
             if (wrapped != out) {
                 FormatResult reflowed = reformatWithoutWrapping(wrapped)
+                // 断点分两类，安全论证不同：
+                //   逗号之后        -> 语法树不变，可以用树等价验证；
+                //   行首 . / ? / :    -> 树会合法地变（Groovy 的 NL 是语法级的），
+                //                          改用"能解析 + 非 NL token 一致 + 续行以不可能起语句的 token 开头"。
+                //                          这三种 token 遵循语法上都不能开始一条语句，
+                //                          所以续行在语法上【必然】属于上一句。
+                boolean treeMustMatch = !introducesLeadingTokenBreak(out, reflowed.output)
                 if (!reflowed.skipped
                         && tokensExceptNewlinesEqual(out, reflowed.output)
-                        && treeShapeIgnoringNewlines(out) == treeShapeIgnoringNewlines(reflowed.output)) {
+                        && (!treeMustMatch
+                                || treeShapeIgnoringNewlines(out) == treeShapeIgnoringNewlines(reflowed.output))) {
                     return new FormatResult(reflowed.output, reflowed.output != input, false, null,
                             stats, ruleCount)
                 }
@@ -138,8 +146,24 @@ class Formatter {
         new Formatter(style.withMaxLineLength(0), registry, preSteps).format(source)
     }
 
+    /** 是否有新增的续行以 {@code .} / {@code ?} / {@code :} 开头（这类断点会合法地改变语法树）。 */
+    private static boolean introducesLeadingTokenBreak(String before, String after) {
+        Set<String> beforeLines = new HashSet<>(Arrays.asList(before.split('\n', -1)))
+        for (String line: after.split('\n', -1)) {
+            String trimmed = line.trim()
+            if (trimmed.empty || beforeLines.contains(line)) {
+                continue
+            }
+            char c = trimmed.charAt(0)
+            if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
+                return true
+            }
+        }
+        false
+    }
+
     /**
-     * 语法树形状，但把【\u6362\u884c\u53f6\u5b50\u3011剔掉。
+     * 语法树形状，但把【\u6362\u884c\u53f6子】剔掉。
      *
      * <p>{@code toStringTree} 会把 {@code NL} token 也打成叶子，而折行本身就是在插入一个换行 ——
      * 直接比字符串必定不等。去掉换行叶子后再比，才是我们真正想问的问题：
