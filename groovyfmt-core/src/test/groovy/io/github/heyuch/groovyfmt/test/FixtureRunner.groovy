@@ -296,15 +296,21 @@ class FixtureRunner {
     /** 新增的续行是否以 {@code .} / {@code ?} / {@code :} 开头（类比 Formatter 里的同名判定）。 */
     private static boolean introducesLeadingTokenBreak(String before, String after) {
         Set<String> beforeLines = new HashSet<>(Arrays.asList(before.split('\n', -1)))
+        String previous = null
         for (String line: after.split('\n', -1)) {
             String trimmed = line.trim()
-            if (trimmed.empty || beforeLines.contains(line)) {
-                continue
+            if (!trimmed.empty && !beforeLines.contains(line)) {
+                // 类一：续行以不可能起语句的 token 开头（. / ? / :）
+                char c = trimmed.charAt(0)
+                if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
+                    return true
+                }
+                // 类二：上一行以赋值符结尾（表达式不完整 ⇒ 语法上必然续行）
+                if (previous?.endsWith('=')) {
+                    return true
+                }
             }
-            char c = trimmed.charAt(0)
-            if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
-                return true
-            }
+            previous = trimmed
         }
         false
     }

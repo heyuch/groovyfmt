@@ -2,6 +2,7 @@ package io.github.heyuch.groovyfmt.layout
 
 import groovy.transform.CompileStatic
 
+import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.model.FormatStyle
 
 /**
@@ -30,44 +31,68 @@ import io.github.heyuch.groovyfmt.model.FormatStyle
 class LineWrapper {
 
     /** 反复折行的上限，防止病态输入下无限循环。 */
-    private static final int MAX_PASSES = 20
+    private static final int MAX_PASSES = 400
 
     private LineWrapper() {
     }
 
     /** 折行到每行不超过 {@code style.maxLineLength}；未启用（<=0）时原样返回。 */
     static String wrap(String source, FormatStyle style) {
+        wrap(source, style, null)
+    }
+
+    /**
+     * 折行到每行不超过 {@code style.maxLineLength}。
+     *
+     * <p>{@code index} 用来限制断点的【语境】：不得断在闭包内、
+     * 也不得断在 for 头里 —— 这两类位置上插入换行会让
+     * CodeNarc 的 ClosureStatementOnOpeningLineOfMultipleLineClosure / BracesForForLoop 报警
+     * （都是实测新增的违规）。
+     */
+    // NestedForLoop：外层是「多轮直到收敛」、内层是「找第一条超限且可断的行」，
+    // 拆成两个方法反而把迭代进展隐藏掉；属非格式化规则。
+    @SuppressWarnings('NestedForLoop')
+    static String wrap(String source, FormatStyle style, ParseContextIndex index) {
         if (style.maxLineLength <= 0 || source == null || source.empty) {
             return source
         }
         String eol = source.contains('\r\n') ? '\r\n' : '\n'
-        List<String> lines = new ArrayList<>(Arrays.asList(source.split('\n', -1)))
+        String current = source
         boolean changed = false
         for (int pass = 0; pass < MAX_PASSES; pass++) {
-            boolean passChanged = false
-            def next = new ArrayList<String>(lines.size())
-            lines.each { String line ->
-                String text = line.endsWith('\r') ? line.substring(0, line.length() - 1) : line
-                if (text.length() <= style.maxLineLength) {
-                    next << text
-                    return
+            // 每一轮只处理一行，且偏移从【当前文本】重算。
+            // 曾经用"一轮扫所有行 + 跑动计数器"，但同一轮里前面的行被切分后
+            // 后续行的偏移就漂了 —— 于是"闭包内不得断"的过滤会失效。
+            List<String> lines = new ArrayList<>(Arrays.asList(current.split('\n', -1)))
+            int offset = 0
+            int target = -1
+            int targetOffset = 0
+            for (int i = 0; i < lines.size(); i++) {
+                String raw = lines[i]
+                String text = raw.endsWith('\r') ? raw.substring(0, raw.length() - 1) : raw
+                if (text.length() > style.maxLineLength
+                        && bestBreakAtOrBefore(text, style.maxLineLength, offset, index) > 0) {
+                    target = i
+                    targetOffset = offset
+                    break
                 }
-                int cut = lastBreakAtOrBefore(text, style.maxLineLength)
-                if (cut <= 0) {
-                    next << text                        // 没有可断点：原样保留（fail-closed）
-                    return
-                }
-                next << text.substring(0, cut)
-                next << text.substring(cut).replaceAll(/^\s+/, '')
-                passChanged = true
+                offset += raw.length() + 1
             }
-            lines = next
-            changed = changed || passChanged
-            if (!passChanged) {
+            if (target < 0) {
                 break
             }
+            String raw = lines[target]
+            String text = raw.endsWith('\r') ? raw.substring(0, raw.length() - 1) : raw
+            int cut = bestBreakAtOrBefore(text, style.maxLineLength, targetOffset, index)
+            def rebuilt = new ArrayList<String>(lines.size() + 1)
+            rebuilt.addAll(lines.subList(0, target))
+            rebuilt << text.substring(0, cut)
+            rebuilt << text.substring(cut).replaceAll(/^\s+/, '')
+            rebuilt.addAll(lines.subList(target + 1, lines.size()))
+            current = rebuilt.join(eol)
+            changed = true
         }
-        changed ? lines.join(eol) : source
+        changed ? current : source
     }
 
     /**
@@ -85,16 +110,80 @@ class LineWrapper {
     // CyclomaticComplexity：这是一个字符级扫描器（引号 / 注释 / 正则状态 + 三类断点），
     // 分支多是本质的；且属非格式化规则。
     @SuppressWarnings('CyclomaticComplexity')
-    private static int lastBreakAtOrBefore(String line, int limit) {
-        int best = -1
+    /**
+     * 选择最优断点。
+     *
+     * <p>规则：先看哪些候选【切完两边都放得下】，在这些里按
+     * <b>元素类型优先级</b>（赋值 &gt; 逗号 &gt; 三元 &gt; 运算符 &gt; 成员链）选，
+     * 同类内再按【嵌套越浅越好】，最后 greedy（尽量晚）；
+     * 若一个都放不下，则取优先级最高者。
+     *
+     * <p>为什么不能让深度跨类型地霸道：实参列表
+     * {@code dslClient.saveAllTheThings(a, b, c)} 里顶层的 {@code .} 比里面的逗号更浅，
+     * 但断在它上面会把整个实参列表留给下一行（仍然超限）。
+     * "两边都放得下"这个硬条件自然地把它排除掉了。
+     */
+    private static int bestBreakAtOrBefore(String line, int limit, int lineOffset,
+            ParseContextIndex index) {
+        List<BreakPoint> all = collectBreakPoints(line, lineOffset, index)
+        if (all.empty) {
+            return -1
+        }
+        List<BreakPoint> fitting = all.findAll { BreakPoint b ->
+            b.position <= limit && (line.length() - b.position) <= limit
+        }
+        List<BreakPoint> pool = fitting ?: all
+        pool.sort { BreakPoint a, BreakPoint b ->
+            a.priority != b.priority ? (a.priority <=> b.priority) :
+            (a.depth != b.depth ? (a.depth <=> b.depth) : (b.position <=> a.position))
+        }
+        pool[0].position
+    }
+
+    /** 一个候选断点。 */
+    private static final class BreakPoint {
+
+        final int position
+        final int depth
+        final int priority
+
+        BreakPoint(int position, int depth, int priority) {
+            this.position = position
+            this.depth = depth
+            this.priority = priority
+        }
+
+    }
+
+    /** 赋值优先级最高（把"算什么"与"怎么算"分开）；成员链最低。 */
+    private static final int PRIO_ASSIGNMENT = 0
+    private static final int PRIO_COMMA = 1
+    private static final int PRIO_TERNARY = 2
+    private static final int PRIO_DOT = 3
+
+    private static final String OP_CHARS = '=+-*/%&|^<>?!'
+
+    private static final Set<String> ASSIGN_OPS = [
+            '=', '+=', '-=', '*=', '/=', '%=', '**=', '&=', '|=', '^=', '<<=', '>>=', '>>>=', '?='] as Set<String>
+
+    /**
+     * 收集一行里的候选断点，带嵌套深度与类型优先级。
+     *
+     * <p>字符串 / 注释 / 正则字面量内部一律不作为断点：靠一个小扫描器跟踪状态，而不是猜。
+     */
+    @SuppressWarnings('CyclomaticComplexity')
+    private static List<BreakPoint> collectBreakPoints(String line, int lineOffset,
+            ParseContextIndex index) {
+        def out = new ArrayList<BreakPoint>()
         int i = 0
         int n = line.length()
+        int depth = 0
         QuoteState state = QuoteState.NONE
         while (i < n) {
             char c = line.charAt(i)
             if (state == QuoteState.NONE) {
                 if (c == ('/' as char) && i + 1 < n && line.charAt(i + 1) == ('/' as char)) {
-                    break                                  // 行注释：后面不可能有断点
+                    break
                 }
                 if (c == ('\'' as char) || c == ('"' as char)) {
                     state = c == ('\'' as char) ? QuoteState.SINGLE : QuoteState.DOUBLE
@@ -106,14 +195,21 @@ class LineWrapper {
                     i++
                     continue
                 }
-                int candidate = -1
-                if (c == (',' as char)) {
-                    candidate = i + 1
+                if (c == ('(' as char) || c == ('[' as char) || c == ('{' as char)) {
+                    depth++
+                } else if (c == (')' as char) || c == (']' as char) || c == ('}' as char)) {
+                    depth = Math.max(0, depth - 1)
+                } else if (c == (',' as char)) {
+                    addBreak(out, i + 1, depth, PRIO_COMMA, lineOffset, index)
                 } else if (c == ('.' as char) || c == ('?' as char) || c == (':' as char)) {
-                    candidate = i
-                }
-                if (candidate >= 0 && candidate > 0 && candidate <= limit && candidate > best) {
-                    best = candidate
+                    int prio = c == ('.' as char) ? PRIO_DOT : PRIO_TERNARY
+                    // 不允许在链的【头部】断开：前缀里必须已经出现过 . ( ) ]，
+                    // 否则 `list.each { ... }` 会被切成 `list` + `.each { ... }`（前半只剩接收者）。
+                    if (c != ('.' as char) || isChainTail(line, i)) {
+                        addBreak(out, i, depth, prio, lineOffset, index)
+                    }
+                } else if (isAssignmentAt(line, i)) {
+                    addBreak(out, i + 1, depth, PRIO_ASSIGNMENT, lineOffset, index)
                 }
             } else if (c == ('\\' as char)) {
                 i += 2
@@ -123,7 +219,47 @@ class LineWrapper {
             }
             i++
         }
-        best
+        out
+    }
+
+    /** 该 {@code .} 是否在链的尾部（而不是把接收者单独切出去）。 */
+    private static boolean isChainTail(String line, int dotIndex) {
+        for (int i = 0; i < dotIndex; i++) {
+            char c = line.charAt(i)
+            if (c == ('.' as char) || c == ('(' as char) || c == (')' as char) || c == (']' as char)) {
+                return true
+            }
+        }
+        false
+    }
+
+    /** 加入一个候选，但先过掉两类语境：闭包内、for 头内。 */
+    // ParameterCount：就是一个候选的接入口（位置/深度/优先级 + 行住置 + 索引），
+    // 打包成对象反而多一层间接；属非格式化规则。
+    @SuppressWarnings('ParameterCount')
+    private static void addBreak(List<BreakPoint> out, int position, int depth, int priority,
+            int lineOffset, ParseContextIndex index) {
+        if (index != null) {
+            int absolute = lineOffset + position
+            if (index.insideAt(absolute, 'closure')
+                    || index.insideAt(absolute, 'forControl')
+                    || index.insideAt(absolute, 'enhancedForControl')) {
+                return
+            }
+        }
+        out << new BreakPoint(position, depth, priority)
+    }
+
+    /** {@code line} 在 {@code index} 处是否是赋值运算符（排除 {@code ==} / {@code !=} / {@code <=} / {@code >=} 等）。 */
+    private static boolean isAssignmentAt(String line, int index) {
+        int n = line.length()
+        int j = index
+        def op = new StringBuilder()
+        while (j < n && OP_CHARS.indexOf((int) line.charAt(j)) >= 0) {
+            op.append(line.charAt(j))
+            j++
+        }
+        op.toString().endsWith('=') && ASSIGN_OPS.contains(op.toString())
     }
 
     private enum QuoteState {
