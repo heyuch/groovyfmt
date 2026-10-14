@@ -4,6 +4,7 @@ import groovy.transform.CompileStatic
 
 import org.apache.groovy.parser.antlr4.GroovyLexer
 
+import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator.Annotated
 import io.github.heyuch.groovyfmt.cst.Cst
 import io.github.heyuch.groovyfmt.cst.CstToken
@@ -46,7 +47,8 @@ class BlankLineNormalizer {
     private BlankLineNormalizer() {
     }
 
-    static Result normalize(Cst cst, Annotated annotated, List<String> gaps, FormatStyle style) {
+    static Result normalize(Cst cst, Annotated annotated, List<String> gaps, FormatStyle style,
+            ParseContextIndex parseIndex) {
         List<CstToken> toks = cst.tokens
         int n = toks.size()
         def outToks = new ArrayList<CstToken>(n)
@@ -70,7 +72,7 @@ class BlankLineNormalizer {
                 e++
             }
             int actual = e - s + 1
-            int desired = desiredNewlineCount(cst, s, e, actual, style)
+            int desired = desiredNewlineCount(cst, parseIndex, s, e, actual, style)
 
             // 保留第一个（它携带换行风格：\n 还是 \r\n），按需复制或丢弃
             for (int k = 0; k < desired; k++) {
@@ -83,18 +85,18 @@ class BlankLineNormalizer {
     }
 
     @SuppressWarnings('ParameterCount')
-    private static int desiredNewlineCount(Cst cst, int s, int e,
-            int actual, FormatStyle style) {
+    private static int desiredNewlineCount(Cst cst, ParseContextIndex parseIndex,
+            int s, int e, int actual, FormatStyle style) {
         int prev = s - 1
         int next = e + 1
         int minBlankLines = 0
         int maxBlankLines = style.maxBlankLines
 
         // ① 类体边界：我们自己的风格要求有且只有这么多空行
-        if (prev >= 0 && isClassBodyOpen(cst, prev)) {
+        if (prev >= 0 && isClassBodyOpen(cst, parseIndex, prev)) {
             minBlankLines = Math.max(minBlankLines, style.blankLinesAfterClassOpen)
         }
-        if (next < cst.tokenCount && isClassBodyClose(cst, next)) {
+        if (next < cst.tokenCount && isClassBodyClose(cst, parseIndex, next)) {
             minBlankLines = Math.max(minBlankLines, style.blankLinesBeforeClassClose)
         }
 
@@ -102,10 +104,10 @@ class BlankLineNormalizer {
         //    非类体的块（方法体 / 闭包 / if / try ...）首尾【禁止】空行。
         //    类体是例外（CodeNarc 对类单独用 ClassStarts/EndsWithBlankLine，
         //    而它在 formatting 规则集里默认不启用），所以这里要把类体排除掉。
-        if (prev >= 0 && isPlainBlockOpen(cst, prev)) {
+        if (prev >= 0 && isPlainBlockOpen(cst, parseIndex, prev)) {
             maxBlankLines = 0
         }
-        if (next < cst.tokenCount && isPlainBlockClose(cst, next)) {
+        if (next < cst.tokenCount && isPlainBlockClose(cst, parseIndex, next)) {
             maxBlankLines = 0
         }
 
@@ -117,7 +119,7 @@ class BlankLineNormalizer {
 
         // ④ CodeNarc MissingBlankLineBeforeAnnotatedField：
         //    带注解的【字段】声明之前必须有空行。
-        if (next < cst.tokenCount && startsAnnotatedField(cst, next)) {
+        if (next < cst.tokenCount && startsAnnotatedField(cst, parseIndex, next)) {
             minBlankLines = Math.max(minBlankLines, 1)
         }
 
@@ -127,7 +129,7 @@ class BlankLineNormalizer {
     }
 
     /** 非类体的左花括号：方法体 / 闭包 / 控制块。GString 插值的 { 也排除。 */
-    private static boolean isPlainBlockOpen(Cst cst, int braceIndex) {
+    private static boolean isPlainBlockOpen(Cst cst, ParseContextIndex parseIndex, int braceIndex) {
         if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
             return false
         }
@@ -135,11 +137,11 @@ class BlankLineNormalizer {
         if (t.type != GroovyLexer.LBRACE || t.comment || isGStringToken(t.type)) {
             return false
         }
-        !isClassBodyOpen(cst, braceIndex)
+        !isClassBodyOpen(cst, parseIndex, braceIndex)
     }
 
     /** 与 isPlainBlockOpen 配对的右花括号。 */
-    private static boolean isPlainBlockClose(Cst cst, int braceIndex) {
+    private static boolean isPlainBlockClose(Cst cst, ParseContextIndex parseIndex, int braceIndex) {
         if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
             return false
         }
@@ -147,7 +149,7 @@ class BlankLineNormalizer {
                 || cst.tokens[braceIndex].comment || isGStringToken(cst.tokens[braceIndex].type)) {
             return false
         }
-        !isClassBodyClose(cst, braceIndex)
+        !isClassBodyClose(cst, parseIndex, braceIndex)
     }
 
     /**
@@ -200,7 +202,8 @@ class BlankLineNormalizer {
      * {@code class/def/...} 之类的声明头，才认定为字段。
      */
     /** 从 index 向前找最近的未配对左括号，判断它是不是类体花括号。 */
-    private static boolean enclosingBracketIsClassBody(Cst cst, int index) {
+    private static boolean enclosingBracketIsClassBody(Cst cst, ParseContextIndex parseIndex,
+            int index) {
         int paren = 0
         int square = 0
         for (int j = index - 1; j >= 0; j--) {
@@ -232,7 +235,7 @@ class BlankLineNormalizer {
                 return false                      // 在下标 / 列表字面量里
             }
             if (type == GroovyLexer.LBRACE) {
-                return isClassBodyOpen(cst, j)    // 是类体才算字段
+                return isClassBodyOpen(cst, parseIndex, j)    // 是类体才算字段
             }
             if (type == GroovyLexer.RBRACE) {
                 return false                      // 已经退到上一个块之外
@@ -242,7 +245,7 @@ class BlankLineNormalizer {
     }
 
     @SuppressWarnings('CyclomaticComplexity')
-    private static boolean startsAnnotatedField(Cst cst, int index) {
+    private static boolean startsAnnotatedField(Cst cst, ParseContextIndex parseIndex, int index) {
         if (index < 0 || index >= cst.tokenCount || cst.tokens[index].type != GroovyLexer.AT) {
             return false
         }
@@ -250,7 +253,7 @@ class BlankLineNormalizer {
         // 带注解的方法参数在 ( 里、带注解的局部变量在方法体 { 里：
         // 前者会被下面的"声明本体扫描"误判成字段（参数行以逗号结尾 + 换行，
         // 看着就像一条字段声明结束了），于是在参数之间插出空行。
-        if (!enclosingBracketIsClassBody(cst, index)) {
+        if (!enclosingBracketIsClassBody(cst, parseIndex, index)) {
             return false
         }
         int j = index
@@ -328,12 +331,19 @@ class BlankLineNormalizer {
      * 类声明头在实践中几乎总写在一行（{@code class A extends B implements C {}}），
      * 而保守方向是"不插空行"—— 那最多是少做一点，不会把空行插到闭包里去。
      */
-    private static boolean isClassBodyOpen(Cst cst, int braceIndex) {
+    private static boolean isClassBodyOpen(Cst cst, ParseContextIndex parseIndex, int braceIndex) {
         if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
             return false
         }
         if (cst.tokens[braceIndex].type != GroovyLexer.LBRACE) {
             return false
+        }
+        // 【必须在类型守卫之后】：否则任何"最内层是 classBody" 的 token
+        // （例如方法声明的首 token）都会被当成类体花括号。
+        // 最内层规则直接给答案：类体与匿名类体都是 classBody，
+        // 而方法体 / if / try / static 块都是 block，闭包是 closure。
+        if (parseIndex != null) {
+            return parseIndex.innermostAt(cst.tokens[braceIndex].start) == 'classBody'
         }
         int parenDepth = 0
         for (int j = braceIndex - 1; j >= 0; j--) {
@@ -385,12 +395,16 @@ class BlankLineNormalizer {
     }
 
     /** 判断某个 {@code }} 是不是"类声明体"的右花括号（即它配对的那个 {@code {} 是类体）。 */
-    private static boolean isClassBodyClose(Cst cst, int braceIndex) {
+    private static boolean isClassBodyClose(Cst cst, ParseContextIndex parseIndex, int braceIndex) {
         if (braceIndex < 0 || braceIndex >= cst.tokenCount) {
             return false
         }
         if (cst.tokens[braceIndex].type != GroovyLexer.RBRACE) {
             return false
+        }
+        // 同上：类型守卫必须在前
+        if (parseIndex != null) {
+            return parseIndex.innermostAt(cst.tokens[braceIndex].start) == 'classBody'
         }
         int depth = 0
         for (int j = braceIndex; j >= 0; j--) {
@@ -405,7 +419,7 @@ class BlankLineNormalizer {
             if (type == GroovyLexer.LBRACE) {
                 depth--
                 if (depth == 0) {
-                    return isClassBodyOpen(cst, j)
+                    return isClassBodyOpen(cst, parseIndex, j)
                 }
             }
         }

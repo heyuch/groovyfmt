@@ -79,7 +79,7 @@ class Formatter {
         // 关掉这个能力（FormatStyle.withoutBlankLineAdjustment）就回到"绝不增删 token"的保守行为。
         String out
         if (style.blankLineAdjustmentEnabled) {
-            def normalized = BlankLineNormalizer.normalize(cst, annotated, gaps, style)
+            def normalized = BlankLineNormalizer.normalize(cst, annotated, gaps, style, index)
             out = cst.render(normalized.tokens, normalized.gaps)
         } else {
             out = cst.render(gaps)
