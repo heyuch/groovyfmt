@@ -414,8 +414,12 @@ class TokenAnnotator {
                 openIdx.push(i)
             } else if (type == GroovyLexer.RBRACE || type == GroovyLexer.RPAREN
                     || type == GroovyLexer.RBRACK) {
-                if (openIdx.size() > 1) {
-                    openIdx.pop()
+                // GString 插值的 } 也不能 pop —— 它的 { 同样没 push（对称处理），
+                // 否则会弹掉外面真正的方法体/类体花括号，让之后所有行的锚点整体错位。
+                if (type != GroovyLexer.RBRACE || !interpolationBrace[i]) {
+                    if (openIdx.size() > 1) {
+                        openIdx.pop()
+                    }
                 }
             }
             if (CstBuilder.isNewlineToken(t)) {
