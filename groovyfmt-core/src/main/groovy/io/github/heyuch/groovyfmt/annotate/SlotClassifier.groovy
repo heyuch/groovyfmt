@@ -110,6 +110,9 @@ class SlotClassifier {
             if (nr == TokenRole.COLON_NAMED_OR_MAP) {
                 return Slot.BEFORE_COLON
             }
+            if (nr == TokenRole.COLON_FOR_IN) {
+                return Slot.BEFORE_FOR_IN_COLON
+            }
             return null                                       // case / default / label / assert 消息
         }
 
@@ -140,6 +143,9 @@ class SlotClassifier {
         }
         if (pr == TokenRole.COLON_NAMED_OR_MAP) {
             return Slot.AFTER_COLON
+        }
+        if (pr == TokenRole.COLON_FOR_IN) {
+            return Slot.AFTER_FOR_IN_COLON
         }
 
         // ── 8. 前缀一元运算之后：!x / -1 / *args

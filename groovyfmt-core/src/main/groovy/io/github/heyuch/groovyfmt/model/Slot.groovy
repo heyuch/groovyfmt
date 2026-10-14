@@ -45,6 +45,10 @@ enum Slot {
     BEFORE_TERNARY_COLON,
     AFTER_TERNARY_COLON,
 
+    /** for (X x : xs) 的冒号两侧。 */
+    BEFORE_FOR_IN_COLON,
+    AFTER_FOR_IN_COLON,
+
     BEFORE_BINARY_OP,
     AFTER_BINARY_OP,
 

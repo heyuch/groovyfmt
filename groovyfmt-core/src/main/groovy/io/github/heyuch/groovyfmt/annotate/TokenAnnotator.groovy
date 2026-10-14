@@ -272,6 +272,8 @@ class TokenAnnotator {
                     ternary.pop()
                     ternary.push(Boolean.FALSE)
                     roles[i] = TokenRole.COLON_TERNARY
+                } else if (isForInColon(toks, i)) {
+                    roles[i] = TokenRole.COLON_FOR_IN
                 } else {
                     char enclosing = stack.peek().charValue()
                     roles[i] = (enclosing == ('(' as char) || enclosing == ('[' as char)) ?
@@ -307,6 +309,78 @@ class TokenAnnotator {
             }
         }
         count
+    }
+
+    /**
+     * {@code for (X x : xs)} 里的那个冒号。
+     *
+     * <p>判据：向前找到<b>最近的未配对左括号</b>，它是这个冒号的直接外层；
+     * 若它前面紧跟 {@code for} 关键字，就是 for-in 冒号。
+     *
+     * <p>为什么必须找"最近的未配对括号"而不是只看层数：{@code for (x in [a: 1])} 里的
+     * 冒号外层是 {@code [} 而不是 for 的 {@code (}，那种情况不能算。
+     */
+    private static boolean isForInColon(List<CstToken> toks, int colonIndex) {
+        int paren = 0
+        int square = 0
+        int curly = 0
+        for (int i = colonIndex - 1; i >= 0; i--) {
+            CstToken t = toks[i]
+            if (t.comment || CstBuilder.isNewlineToken(t)) {
+                continue
+            }
+            int type = t.type
+            if (type == GroovyLexer.RPAREN) {
+                paren++
+                continue
+            }
+            if (type == GroovyLexer.RBRACK) {
+                square++
+                continue
+            }
+            if (type == GroovyLexer.RBRACE) {
+                curly++
+                continue
+            }
+            if (type == GroovyLexer.LPAREN) {
+                if (paren > 0) {
+                    paren--
+                    continue
+                }
+                if (square != 0 || curly != 0) {
+                    return false
+                }
+                int before = prevCodeToken(toks, i - 1)
+                return before >= 0 && toks[before].type == GroovyLexer.FOR
+            }
+            if (type == GroovyLexer.LBRACK) {
+                if (square > 0) {
+                    square--
+                    continue
+                }
+                // 最近的未配对括号是 [ —— 冒号的直接外层不是 for 的 ( ，例如 for (x in [a: 1])
+                return false
+            }
+            if (type == GroovyLexer.LBRACE) {
+                if (curly > 0) {
+                    curly--
+                    continue
+                }
+                // 最近的未配对括号是 { ，例如 for (x in list.collect { [a: 1] })
+                return false
+            }
+        }
+        false
+    }
+
+    /** 向前找第一个真正的代码 token（跳过注释与换行）。 */
+    private static int prevCodeToken(List<CstToken> toks, int from) {
+        for (int i = Math.min(from, toks.size() - 1); i >= 0; i--) {
+            if (!toks[i].comment && !CstBuilder.isNewlineToken(toks[i])) {
+                return i
+            }
+        }
+        -1
     }
 
     private static void open(Deque<Character> stack, Deque<Boolean> ternary, char c) {

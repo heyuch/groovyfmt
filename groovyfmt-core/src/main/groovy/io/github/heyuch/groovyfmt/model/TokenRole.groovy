@@ -41,6 +41,8 @@ enum TokenRole {
     RBRACE,
 
     COLON_TERNARY,
+    /** for (X x : xs) 里的冒号 —— 两侧都要空格。 */
+    COLON_FOR_IN,
     COLON_NAMED_OR_MAP,
     /** case / default / label / assert 消息的冒号 —— 一律不表态。 */
     COLON_UNKNOWN,

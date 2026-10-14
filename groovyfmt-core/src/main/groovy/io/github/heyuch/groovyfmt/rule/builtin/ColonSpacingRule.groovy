@@ -28,6 +28,9 @@ class ColonSpacingRule extends MappedSpacingRule {
         m[Slot.AFTER_COLON] = Spacing.SPACE
         m[Slot.BEFORE_TERNARY_COLON] = Spacing.SPACE
         m[Slot.AFTER_TERNARY_COLON] = Spacing.SPACE
+        // for (X x : xs) —— 两侧都要空格
+        m[Slot.BEFORE_FOR_IN_COLON] = Spacing.SPACE
+        m[Slot.AFTER_FOR_IN_COLON] = Spacing.SPACE
         m
     }
 
