@@ -47,13 +47,18 @@ class Formatter {
         this.preSteps = List.copyOf(preSteps)
     }
 
+    /** 折行+重排的最大轮数；每一轮都在重新编排后重新判断行长。 */
+    private static final int MAX_WRAP_ROUNDS = 8
+
     static Formatter defaults() {
         new Formatter(FormatStyle.DEFAULT, RuleRegistry.defaults(), [new FinalNewlineStep()])
     }
 
     // CyclomaticComplexity：这是整条格式化管线（预步骤 → 注解 → 布局 → 空行 → 两道闸门 → 折行），
     // 拆开反而看不出顺序与依赖；属非格式化规则。
-    @SuppressWarnings('CyclomaticComplexity')
+    // AbcMetric / CyclomaticComplexity：这是整条管道（预步骤 → 注解 → 布局 → 空行
+    // → 两道闸门 → 迭代折行），拆开反而看不出顺序与依赖；属非格式化规则。
+    @SuppressWarnings(['AbcMetric', 'CyclomaticComplexity'])
     FormatResult format(String input) {
         def stats = new Stats()
         int ruleCount = registry.spacingRules().size()
@@ -118,23 +123,30 @@ class Formatter {
         // 校验换成：忽略换行后 token 一致 且 parse tree 形状一致。
         // 任何一条不满足就回退到【未折行】的结果 —— 宁可留下超长行。
         if (style.maxLineLength > 0) {
-            String wrapped = LineWrapper.wrap(out, style, index)
-            if (wrapped != out) {
-                FormatResult reflowed = reformatWithoutWrapping(wrapped)
-                // 断点分两类，安全论证不同：
-                //   逗号之后        -> 语法树不变，可以用树等价验证；
-                //   行首 . / ? / :    -> 树会合法地变（Groovy 的 NL 是语法级的），
-                //                          改用"能解析 + 非 NL token 一致 + 续行以不可能起语句的 token 开头"。
-                //                          这三种 token 遵循语法上都不能开始一条语句，
-                //                          所以续行在语法上【必然】属于上一句。
-                boolean treeMustMatch = !introducesLeadingTokenBreak(out, reflowed.output)
-                if (!reflowed.skipped
-                        && tokensExceptNewlinesEqual(out, reflowed.output)
-                        && (!treeMustMatch
-                                || treeShapeIgnoringNewlines(out) == treeShapeIgnoringNewlines(reflowed.output))) {
-                    return new FormatResult(reflowed.output, reflowed.output != input, false, null,
-                            stats, ruleCount)
+            // 折行必须【迭代】：它按行长选断点，但续行的最终缩进是格式化器算出来的 ——
+            // 只折一次就会出现"剪切时在第 0 列没超限，重排到 16 列后又超限"。
+            // 每一轮都重新编排后再判断，直到不再变化（有上限）。
+            String current = out
+            String accepted = null
+            for (int round = 0; round < MAX_WRAP_ROUNDS; round++) {
+                ParseContextIndex wrapIndex = ParseContextIndex.build(current)
+                String wrapped = LineWrapper.wrap(current, style, wrapIndex)
+                if (wrapped == current) {
+                    break
                 }
+                FormatResult reflowed = reformatWithoutWrapping(wrapped)
+                // 每一轮都要过同一套校验，不通过就停在上一个已验证的结果上
+                if (reflowed.skipped
+                        || !tokensExceptNewlinesEqual(out, reflowed.output)
+                        || (!introducesLeadingTokenBreak(out, reflowed.output)
+                                && treeShapeIgnoringNewlines(out) != treeShapeIgnoringNewlines(reflowed.output))) {
+                    break
+                }
+                accepted = reflowed.output
+                current = reflowed.output
+            }
+            if (accepted != null) {
+                return new FormatResult(accepted, accepted != input, false, null, stats, ruleCount)
             }
         }
 
