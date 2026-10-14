@@ -123,7 +123,7 @@ class Formatter {
                 FormatResult reflowed = reformatWithoutWrapping(wrapped)
                 if (!reflowed.skipped
                         && tokensExceptNewlinesEqual(out, reflowed.output)
-                        && CstBuilder.treeShapeOnly(out) == CstBuilder.treeShapeOnly(reflowed.output)) {
+                        && treeShapeIgnoringNewlines(out) == treeShapeIgnoringNewlines(reflowed.output)) {
                     return new FormatResult(reflowed.output, reflowed.output != input, false, null,
                             stats, ruleCount)
                 }
@@ -136,6 +136,21 @@ class Formatter {
     /** 用"关掉折行"的样式重跑一遍，续行缩进由现有锚点模型重新算。 */
     private FormatResult reformatWithoutWrapping(String source) {
         new Formatter(style.withMaxLineLength(0), registry, preSteps).format(source)
+    }
+
+    /**
+     * 语法树形状，但把【\u6362\u884c\u53f6\u5b50\u3011剔掉。
+     *
+     * <p>{@code toStringTree} 会把 {@code NL} token 也打成叶子，而折行本身就是在插入一个换行 ——
+     * 直接比字符串必定不等。去掉换行叶子后再比，才是我们真正想问的问题：
+     * <b>换行是否插在了有害位置</b>。若位置有害，树的【结构】会变，
+     * 而不只是多一个换行叶子。
+     *
+     * <p>这个比较对内容是有意放宽的（它也会吃掉 token 文本里的空白），
+     * 而内容由 {@link #tokensExceptNewlinesEqual} 独立把关。
+     */
+    private static String treeShapeIgnoringNewlines(String source) {
+        CstBuilder.treeShapeOnly(source).replaceAll(/\s+/, '')
     }
 
     /** 忽略换行 token 后，token 序列是否一致（注释也是 NL 类 token，但必须参与比较）。 */
