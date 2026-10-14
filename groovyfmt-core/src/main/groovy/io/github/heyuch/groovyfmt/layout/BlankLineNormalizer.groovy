@@ -199,11 +199,58 @@ class BlankLineNormalizer {
      * <p>刻意保守：跳过注解之后，只有当这一行既没有 {@code (}（方法）也没有
      * {@code class/def/...} 之类的声明头，才认定为字段。
      */
-    // CyclomaticComplexity：这里是一段纯词法判定，"跳过注解再看声明本体"这件事
-    // 天然分支多；拆成多个方法反而看不出顺序。属非格式化规则，带理由豁免。
+    /** 从 index 向前找最近的未配对左括号，判断它是不是类体花括号。 */
+    private static boolean enclosingBracketIsClassBody(Cst cst, int index) {
+        int paren = 0
+        int square = 0
+        for (int j = index - 1; j >= 0; j--) {
+            CstToken t = cst.tokens[j]
+            if (t.comment) {
+                continue
+            }
+            int type = t.type
+            if (type == GroovyLexer.RPAREN) {
+                paren++
+                continue
+            }
+            if (type == GroovyLexer.RBRACK) {
+                square++
+                continue
+            }
+            if (type == GroovyLexer.LPAREN) {
+                if (paren > 0) {
+                    paren--
+                    continue
+                }
+                return false                      // 在参数列表 / 实参列表里
+            }
+            if (type == GroovyLexer.LBRACK) {
+                if (square > 0) {
+                    square--
+                    continue
+                }
+                return false                      // 在下标 / 列表字面量里
+            }
+            if (type == GroovyLexer.LBRACE) {
+                return isClassBodyOpen(cst, j)    // 是类体才算字段
+            }
+            if (type == GroovyLexer.RBRACE) {
+                return false                      // 已经退到上一个块之外
+            }
+        }
+        false
+    }
+
     @SuppressWarnings('CyclomaticComplexity')
     private static boolean startsAnnotatedField(Cst cst, int index) {
         if (index < 0 || index >= cst.tokenCount || cst.tokens[index].type != GroovyLexer.AT) {
+            return false
+        }
+        // 只有【类体】里的字段才适用这条规则。
+        // 带注解的方法参数在 ( 里、带注解的局部变量在方法体 { 里：
+        // 前者会被下面的"声明本体扫描"误判成字段（参数行以逗号结尾 + 换行，
+        // 看着就像一条字段声明结束了），于是在参数之间插出空行。
+        if (!enclosingBracketIsClassBody(cst, index)) {
             return false
         }
         int j = index
