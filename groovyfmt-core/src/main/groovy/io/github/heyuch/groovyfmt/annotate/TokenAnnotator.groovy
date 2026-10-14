@@ -314,7 +314,7 @@ class TokenAnnotator {
                     ternary.pop()
                     ternary.push(Boolean.FALSE)
                     roles[i] = TokenRole.COLON_TERNARY
-                } else if (isForInColon(toks, i)) {
+                } else if (isForInColon(toks, i, parseIndex)) {
                     roles[i] = TokenRole.COLON_FOR_IN
                 } else {
                     char enclosing = stack.peek().charValue()
@@ -455,7 +455,14 @@ class TokenAnnotator {
      * <p>为什么必须找"最近的未配对括号"而不是只看层数：{@code for (x in [a: 1])} 里的
      * 冒号外层是 {@code [} 而不是 for 的 {@code (}，那种情况不能算。
      */
-    private static boolean isForInColon(List<CstToken> toks, int colonIndex) {
+    private static boolean isForInColon(List<CstToken> toks, int colonIndex,
+            ParseContextIndex parseIndex) {
+        // 优先问 parse tree：冒号是 enhancedForControl 的【直接】子节点，
+        // 而 map 条目的冒号在 mapEntry 之下、for 头里三元的冒号在 expression 之下 ——
+        // 用"最内层规则"恰好把这三者分开，不需要向后扫括号去猜。
+        if (parseIndex != null) {
+            return parseIndex.innermostAt(toks[colonIndex].start) == 'enhancedForControl'
+        }
         int paren = 0
         int square = 0
         int curly = 0
