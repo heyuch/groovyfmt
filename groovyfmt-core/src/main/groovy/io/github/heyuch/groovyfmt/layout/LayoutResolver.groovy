@@ -8,6 +8,7 @@ import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.annotate.SlotClassifier
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator.Annotated
 import io.github.heyuch.groovyfmt.cst.Cst
+import io.github.heyuch.groovyfmt.cst.CstBuilder
 import io.github.heyuch.groovyfmt.cst.Gap
 import io.github.heyuch.groovyfmt.model.FormatStyle
 import io.github.heyuch.groovyfmt.model.Slot
@@ -240,7 +241,11 @@ class LayoutResolver {
         //   匿名类的 { 所在行以表达式开头 -> innermost = primary；
         //   具名类的 { 所在行以修饰符开头 -> classOrInterfaceModifier 一类。
         if (index != null && firstCode >= 0 && firstCode != braceToken
-                && index.innermostAt(cst.tokens[firstCode].start) == 'primary') {
+                // 信号取语法级：{ 前一个有效 token 是 ')'（即 new X(...) { 形式）⇒ 匿名类。
+                // 曾用过"行首 token 是 primary"，但那只在 new 起行时成立；真实代码里行首是
+                // 字符串字面量（"... " + \n "...", new X() {），于是从未触发。
+                && tokenBeforeIsCloseParen(cst, braceToken)
+                && index.innermostAt(cst.tokens[braceToken].start) == 'classBody') {
             int limit = Math.max(0, braceLine - 40)
             int k = braceLine
             while (k > limit && !startsStatementAt(cst, annotated, index, k)) {
@@ -258,6 +263,16 @@ class LayoutResolver {
             return annotated.lineOf(lineStartOpener)
         }
         braceLine
+    }
+
+    /** {@code {} 前面的有效 token 是否是 {@code )}（即 `new X(...) {` 形式的匿名类）。 */
+    private static boolean tokenBeforeIsCloseParen(Cst cst, int braceToken) {
+        int i = braceToken - 1
+        while (i >= 0 && (cst.tokens[i].text.trim().empty
+                        || CstBuilder.isComment(cst.tokens[i].type, cst.tokens[i].text))) {
+            i--
+        }
+        i >= 0 && cst.tokens[i].text == ')'
     }
 
     /** 该行是否是一个类声明行（实测：它的 innermost 是修饰符节点）。 */
