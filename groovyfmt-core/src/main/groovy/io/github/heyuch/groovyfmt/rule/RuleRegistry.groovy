@@ -17,6 +17,7 @@ import io.github.heyuch.groovyfmt.rule.builtin.KeywordSpacingRule
 import io.github.heyuch.groovyfmt.rule.builtin.PunctuationSpacingRule
 import io.github.heyuch.groovyfmt.rule.builtin.TrailingWhitespaceRule
 import io.github.heyuch.groovyfmt.rule.builtin.UnaryOperatorSpacingRule
+import io.github.heyuch.groovyfmt.rule.builtin.WildcardSpacingRule
 
 /**
  * 规则注册表 —— 模块化的落点。
@@ -86,6 +87,7 @@ class RuleRegistry {
         .register(new KeywordParenSpacingRule())
         .register(new DotChainSpacingRule())
         .register(new ColonSpacingRule())
+        .register(new WildcardSpacingRule())
         .register(new BraceSpacingRule())
         .register(new KeywordSpacingRule())
         .register(new AnnotationSpacingRule())

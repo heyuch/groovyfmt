@@ -148,6 +148,11 @@ class SlotClassifier {
             return Slot.AFTER_FOR_IN_COLON
         }
 
+        // ── 7.5 泛型通配符 ? 之前不留空格（放在逗号之后，才不会被 AFTER_COMMA 抢走）
+        if (nr == TokenRole.QUESTION_WILDCARD) {
+            return Slot.BEFORE_WILDCARD
+        }
+
         // ── 8. 前缀一元运算之后：!x / -1 / *args
         if (pr == TokenRole.UNARY_PREFIX) {
             return Slot.AFTER_UNARY_OP

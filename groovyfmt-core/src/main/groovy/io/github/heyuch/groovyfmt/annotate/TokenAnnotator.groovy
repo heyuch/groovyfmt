@@ -285,8 +285,14 @@ class TokenAnnotator {
             roles[i] = classifyToken(prevType, type)
 
             if (type == GroovyLexer.QUESTION) {
-                ternary.pop()
-                ternary.push(Boolean.TRUE)
+                if (isWildcardQuestion(toks, i)) {
+                    // 泛型通配符不是三元运算符：不能压 ternary 栈，
+                    // 否则后面第一个冒号会被误判成三元冒号。
+                    roles[i] = TokenRole.QUESTION_WILDCARD
+                } else {
+                    ternary.pop()
+                    ternary.push(Boolean.TRUE)
+                }
             }
         }
 
@@ -309,6 +315,32 @@ class TokenAnnotator {
             }
         }
         count
+    }
+
+    /**
+     * 泛型通配符 {@code ?}：后面的第一个代码 token 是 {@code extends} / {@code super} / {@code >} / {@code ,}。
+     *
+     * <p>这是纯局部判据，不需要知道是否在泛型里 —— 三元运算符后面不会出现这四者
+     * （{@code x ? extends y : z} 不是合法 Groovy）。
+     */
+    private static boolean isWildcardQuestion(List<CstToken> toks, int index) {
+        int next = nextCodeToken(toks, index + 1)
+        if (next < 0) {
+            return false
+        }
+        int type = toks[next].type
+        type == GroovyLexer.EXTENDS || type == GroovyLexer.SUPER ||
+        type == GroovyLexer.GT || type == GroovyLexer.COMMA
+    }
+
+    /** 向后找第一个真正的代码 token（跳过注释与换行）。 */
+    private static int nextCodeToken(List<CstToken> toks, int from) {
+        for (int i = Math.max(from, 0); i < toks.size(); i++) {
+            if (!toks[i].comment && !CstBuilder.isNewlineToken(toks[i])) {
+                return i
+            }
+        }
+        -1
     }
 
     /**

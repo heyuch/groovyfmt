@@ -41,6 +41,8 @@ enum TokenRole {
     RBRACE,
 
     COLON_TERNARY,
+    /** 泛型通配符 ? ：Class<?> / Map<String, ?> / Class<? extends T>。 */
+    QUESTION_WILDCARD,
     /** for (X x : xs) 里的冒号 —— 两侧都要空格。 */
     COLON_FOR_IN,
     COLON_NAMED_OR_MAP,

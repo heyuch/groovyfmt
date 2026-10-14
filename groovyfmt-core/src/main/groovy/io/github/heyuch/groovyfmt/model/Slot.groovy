@@ -46,6 +46,9 @@ enum Slot {
     AFTER_TERNARY_COLON,
 
     /** for (X x : xs) 的冒号两侧。 */
+    /** 泛型通配符 ? 之前（不留空格）。 */
+    BEFORE_WILDCARD,
+
     BEFORE_FOR_IN_COLON,
     AFTER_FOR_IN_COLON,
 
