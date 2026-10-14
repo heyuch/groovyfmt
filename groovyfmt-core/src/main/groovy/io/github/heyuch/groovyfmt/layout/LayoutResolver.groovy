@@ -252,9 +252,16 @@ class LayoutResolver {
         if (prev < 0 || annotated.role(prev) != TokenRole.BINARY_OP) {
             return false
         }
-        // ARROW 虽然被当作二元运算符，但闭包参数列表的 `->` 是【列表结束】，
-        // 不是表达式片段：`{ a, b ->` 换行后的第一行是闭包体的新语句，不是续行。
-        annotated.type(prev) != GroovyLexer.ARROW
+        // 两类 token 必须排除，它们"长得像运算符"但通常不是未完成的表达式：
+        //   ARROW：闭包参数列表的 `->` 是【列表结束】，
+        //          `{ a, b ->` 换行后的第一行是闭包体的新语句，不是续行。
+        //   GT / LT：泛型的闭合与比较共用同一批 token（Groovy 词法把 >> 拆成两个 GT），
+        //          所以 `} as Set<String>` 这种【已经完整】的行会被误判成"以运算符结尾"，
+        //          导致后面每一行越缩越深。真实代码里就是这么炸的。
+        //          代价是漏掉罕见的 `a >` 换行续行 —— 保守方向正确。
+        //          根治仍然要靠 AST 的语句行区间（见 pending/）。
+        int prevType = annotated.type(prev)
+        prevType != GroovyLexer.ARROW && prevType != GroovyLexer.GT && prevType != GroovyLexer.LT
     }
 
     /**
