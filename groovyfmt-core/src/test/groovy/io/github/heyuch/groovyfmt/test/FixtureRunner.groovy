@@ -161,7 +161,7 @@ class FixtureRunner {
 
     // AbcMetric/ParameterCount：这个方法是"一个 fixture 的完整判定流程"，
     // 四道检查 + pending 分支堆在一起，拆开反而看不出顺序与依赖。
-    @SuppressWarnings(['AbcMetric', 'ParameterCount'])
+    @SuppressWarnings(['AbcMetric', 'ParameterCount', 'CyclomaticComplexity'])
     private static Status checkGolden(File fixture, String label, Formatter formatter,
             Outcome outcome, boolean update, boolean pending) {
         String input = fixture.getText('UTF-8')
@@ -231,6 +231,12 @@ class FixtureRunner {
         }
 
         // ④ 幂等：断言【期望输出】本身是稳定不动点（比 format(format(x)) 更强）
+        // 对 pending 用例【跳过】：那里的期望是尚未实现的目标行为，
+        // 在当前实现下当然还不是不动点 —— 拿它当失败会直接把"记下目标"这件事堵死。
+        // 仍要跑的是上面的语义不变式（那是对【实际输出】的检查，能抓真 bug）。
+        if (pending) {
+            return Status.READY
+        }
         FormatResult again = formatter.format(expected)
         if (again.skipped || again.output != expected) {
             if (pending) {

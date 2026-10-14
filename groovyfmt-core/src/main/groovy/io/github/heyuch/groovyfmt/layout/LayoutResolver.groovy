@@ -170,10 +170,10 @@ class LayoutResolver {
         // ② 续行：以 . / 二元运算符 / 三元 ? : 开头的行是"语句级续行"，
         //    锚点应是语句首行，而不是外面那个块 —— 否则折行的三元、&& 链、
         //    点链都会只拿到块缩进（= 语句自身的缩进），续行缩进整个丢失。
-        if (isContinuationStart(annotated, lineStartToken)) {
+        if (isContinuationLine(annotated, annotated.lineOf(lineStartToken))) {
             int line = annotated.lineOf(lineStartToken)
             int k = line - 1
-            while (k >= 0 && isContinuationStart(annotated, firstCodeOfLine(annotated, k))) {
+            while (k >= 0 && isContinuationLine(annotated, k)) {
                 k--
             }
             return k >= 0 ? lineIndent[k] + style.continuationIndent : null
@@ -224,6 +224,32 @@ class LayoutResolver {
             return annotated.lineOf(lineStartOpener)
         }
         braceLine
+    }
+
+    /**
+     * 该行是不是上一行表达式的续行。满足其一即可：
+     *
+     * <ul>
+     *   <li>本行以续行 token 开头：{@code .} / 二元运算符 / 三元 {@code ? :}；</li>
+     *   <li><b>上一行的最后一个代码 token 是二元运算符</b> —— 也就是"运算符写在行尾"的风格
+     *       （{@code a +} 换行后跟操作数）。这种写法下本行以【操作数】开头，
+     *       只看行首根本看不出来，之前就因为漏了这条而把续行当成了新语句。</li>
+     * </ul>
+     *
+     * <p>这仍然是词法判据：Groovy 里 {@code def x = a} 换行后写 {@code + b} 其实是
+     * <b>两条语句</b>（{@code +b} 是一元加表达式语句），词法上与续行无法区分 ——
+     * 精确区分需要 AST 的语句行区间（见 pending/wrapped-statement.groovy 的注释）。
+     */
+    private static boolean isContinuationLine(Annotated annotated, int line) {
+        int first = firstCodeOfLine(annotated, line)
+        if (first >= annotated.size()) {
+            return false
+        }
+        if (isContinuationStart(annotated, first)) {
+            return true
+        }
+        int prev = annotated.prevCode(first - 1)
+        prev >= 0 && annotated.role(prev) == TokenRole.BINARY_OP
     }
 
     /**
