@@ -2,6 +2,8 @@ package io.github.heyuch.groovyfmt.pipeline
 
 import groovy.transform.CompileStatic
 
+import org.apache.groovy.parser.antlr4.GroovyLexer
+
 import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator
 import io.github.heyuch.groovyfmt.cst.Cst
@@ -9,6 +11,7 @@ import io.github.heyuch.groovyfmt.cst.CstBuilder
 import io.github.heyuch.groovyfmt.cst.GroovySyntaxException
 import io.github.heyuch.groovyfmt.layout.BlankLineNormalizer
 import io.github.heyuch.groovyfmt.layout.LayoutResolver
+import io.github.heyuch.groovyfmt.layout.LineWrapper
 import io.github.heyuch.groovyfmt.layout.Stats
 import io.github.heyuch.groovyfmt.model.FormatStyle
 import io.github.heyuch.groovyfmt.rule.RuleRegistry
@@ -48,6 +51,9 @@ class Formatter {
         new Formatter(FormatStyle.DEFAULT, RuleRegistry.defaults(), [new FinalNewlineStep()])
     }
 
+    // CyclomaticComplexity：这是整条格式化管线（预步骤 → 注解 → 布局 → 空行 → 两道闸门 → 折行），
+    // 拆开反而看不出顺序与依赖；属非格式化规则。
+    @SuppressWarnings('CyclomaticComplexity')
     FormatResult format(String input) {
         def stats = new Stats()
         int ruleCount = registry.spacingRules().size()
@@ -108,7 +114,45 @@ class Formatter {
             }
         }
 
+        // 折行：它会【插入换行】，所以放在上面两条闸门（面向"不改变换行位置"）之后，
+        // 校验换成：忽略换行后 token 一致 且 parse tree 形状一致。
+        // 任何一条不满足就回退到【未折行】的结果 —— 宁可留下超长行。
+        if (style.maxLineLength > 0) {
+            String wrapped = LineWrapper.wrap(out, style)
+            if (wrapped != out) {
+                FormatResult reflowed = reformatWithoutWrapping(wrapped)
+                if (!reflowed.skipped
+                        && tokensExceptNewlinesEqual(out, reflowed.output)
+                        && CstBuilder.treeShapeOnly(out) == CstBuilder.treeShapeOnly(reflowed.output)) {
+                    return new FormatResult(reflowed.output, reflowed.output != input, false, null,
+                            stats, ruleCount)
+                }
+            }
+        }
+
         new FormatResult(out, out != input, false, null, stats, ruleCount)
+    }
+
+    /** 用"关掉折行"的样式重跑一遍，续行缩进由现有锚点模型重新算。 */
+    private FormatResult reformatWithoutWrapping(String source) {
+        new Formatter(style.withMaxLineLength(0), registry, preSteps).format(source)
+    }
+
+    /** 忽略换行 token 后，token 序列是否一致（注释也是 NL 类 token，但必须参与比较）。 */
+    private static boolean tokensExceptNewlinesEqual(String before, String after) {
+        nonNewlineFingerprint(before) == nonNewlineFingerprint(after)
+    }
+
+    private static String nonNewlineFingerprint(String source) {
+        Cst parsed = CstBuilder.build(source)
+        def sb = new StringBuilder()
+        parsed.tokens.each { t ->
+            boolean newline = t.type == GroovyLexer.NL && !CstBuilder.isComment(t.type, t.text)
+            if (!newline) {
+                sb.append(t.type).append(':').append(t.text).append('\u0000')
+            }
+        }
+        sb.toString()
     }
 
     private static FormatResult fallback(String input, String reason, Stats stats, int ruleCount) {

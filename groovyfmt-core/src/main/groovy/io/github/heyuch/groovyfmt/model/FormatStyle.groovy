@@ -34,6 +34,12 @@ class FormatStyle {
     /** 是否做额外的语法树等价比对（在规范化 token 序列之上，保险，可关）。 */
     boolean verifyParseTree
 
+    /**
+     * 折行宽度；&lt;=0 表示不折行。默认 120，与 CodeNarc
+     * {@code LineLength} 的默认值一致。
+     */
+    int maxLineLength = 120
+
     @SuppressWarnings('ParameterCount')   // 不可变值对象，字段与参数一一对应
     FormatStyle(int indentWidth, int continuationIndent, int maxBlankLines,
             int blankLinesAfterClassOpen, int blankLinesBeforeClassClose,
@@ -50,6 +56,13 @@ class FormatStyle {
         this.blankLinesAfterClassOpen = blankLinesAfterClassOpen
         this.blankLinesBeforeClassClose = blankLinesBeforeClassClose
         this.verifyParseTree = verifyParseTree
+    }
+
+    FormatStyle withMaxLineLength(int v) {
+        def copy = new FormatStyle(indentWidth, continuationIndent, maxBlankLines,
+                blankLinesAfterClassOpen, blankLinesBeforeClassClose, verifyParseTree)
+        copy.maxLineLength = v
+        copy
     }
 
     FormatStyle withIndentWidth(int v) {

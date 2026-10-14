@@ -216,7 +216,9 @@ class FixtureRunner {
             }
             // 用【规范化】形式比对：空行规范化会增删 NL token，
             // 所以唯一允许的 token 级差异就是空行的个数（见 Cst#canonicalTokenFingerprint）。
-            if (in.canonicalTokenFingerprint() != out.canonicalTokenFingerprint()) {
+            // 比较【忽略换行】的 token 序列：折行会合法地插入换行，
+            // 而"它插得对不对"由下面的语法树形状一致来裁决 —— 因为 Groovy 的 NL 是语法级的。
+            if (contentFingerprint(input) != contentFingerprint(r.output)) {
                 fail(outcome, label, "token 序列变了: ${in.firstTokenDifference(out)}")
                 return Status.FAIL
             }
@@ -285,6 +287,20 @@ class FixtureRunner {
         println "  ✗ $label"
         detail.readLines().each { String line -> println "      $line" }
         false
+    }
+
+    /** 忽略换行 token（但保留注释）的内容指纹。 */
+    private static String contentFingerprint(String source) {
+        Cst parsed = CstBuilder.build(source)
+        def sb = new StringBuilder()
+        parsed.tokens.each { t ->
+            boolean newline = t.type == org.apache.groovy.parser.antlr4.GroovyLexer.NL
+            && !CstBuilder.isComment(t.type, t.text)
+            if (!newline) {
+                sb.append(t.type).append(':').append(t.text).append('\u0000')
+            }
+        }
+        sb.toString()
     }
 
     /** 逐行差异：只展示前若干处不同，够定位就行。 */
