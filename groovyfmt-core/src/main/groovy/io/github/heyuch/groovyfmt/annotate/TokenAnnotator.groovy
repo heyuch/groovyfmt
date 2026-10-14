@@ -84,18 +84,26 @@ class TokenAnnotator {
         private final int[] parenDepthArr
         private final int[] parenSinceBraceArr
         private final char[] topArr
+        private final int[] openerArr
+        private final int[] lineArr
+        private final int[] lineFirstArr
         private final boolean[] newline
         private final boolean[] interpolationBrace
 
         @SuppressWarnings('ParameterCount')
+        @SuppressWarnings('ParameterCount')
         Annotated(Cst cst, TokenRole[] roles, int[] braceDepthArr, int[] parenDepthArr,
-                int[] parenSinceBraceArr, char[] topArr, boolean[] newline, boolean[] interpolationBrace) {
+                int[] parenSinceBraceArr, char[] topArr, int[] openerArr, int[] lineArr,
+                int[] lineFirstArr, boolean[] newline, boolean[] interpolationBrace) {
             this.cst = cst
             this.roles = roles
             this.braceDepthArr = braceDepthArr
             this.parenDepthArr = parenDepthArr
             this.parenSinceBraceArr = parenSinceBraceArr
             this.topArr = topArr
+            this.openerArr = openerArr
+            this.lineArr = lineArr
+            this.lineFirstArr = lineFirstArr
             this.newline = newline
             this.interpolationBrace = interpolationBrace
         }
@@ -140,6 +148,32 @@ class TokenAnnotator {
          */
         int parenDepthSinceBraceBefore(int i) {
             parenSinceBraceArr[i]
+        }
+
+        /**
+         * 该 token 之前<b>最内层未闭合括号的打开位置</b>（token 下标）；没有则 -1。
+         *
+         * <p>这是"缩进锚点"模型的基础：一行的缩进 = 打开本行所在括号的那一行的缩进 + 一次增量，
+         * 而不是"从第 0 列数几层"。两者只在每层锚点恰好落在 {@code 层数×增量} 网格上时才相等 ——
+         * 一旦花括号/括号嵌在续行里（匿名类、闭包实参、多层实参），深度模型就会算错。
+         */
+        int openerBefore(int i) {
+            openerArr[i]
+        }
+
+        /** 该 token 所在的行号（从 0 开始）。 */
+        int lineOf(int i) {
+            lineArr[i]
+        }
+
+        /** 总行数。 */
+        int lineCount() {
+            lineFirstArr.length
+        }
+
+        /** 第 line 行的第一个 token 下标。 */
+        int firstTokenOfLine(int line) {
+            lineFirstArr[line]
         }
 
         /** 该 token 所在的最内层括号类型：{@code {} {@code (} {@code [} 或 0。 */
@@ -296,7 +330,17 @@ class TokenAnnotator {
             }
         }
 
-        new Annotated(cst, roles, braceDepth, parenDepth, parenSinceBrace, top, newline, interpolationBrace)
+        int[] opener = new int[n]
+        int[] line = new int[n]
+        List<Integer> firstOfLine = []
+        computeLineAndOpeners(toks, interpolationBrace, opener, line, firstOfLine)
+        int[] lineFirst = new int[firstOfLine.size()]
+        for (int i = 0; i < lineFirst.length; i++) {
+            lineFirst[i] = firstOfLine.get(i)
+        }
+
+        new Annotated(cst, roles, braceDepth, parenDepth, parenSinceBrace, top, opener, line,
+                lineFirst, newline, interpolationBrace)
     }
 
     /**
@@ -341,6 +385,46 @@ class TokenAnnotator {
             }
         }
         -1
+    }
+
+    /**
+     * 独立的一遍扫描：算出每个 token 的行号、每行首 token、以及"最内层未闭合括号的打开位置"。
+     *
+     * <p>刻意与上面那个词法状态机分开 —— 那一遍已经够密了，这里只需要括号配对信息，
+     * 重算一遍比把三个新的栈穿进去风险小得多。
+     */
+    private static void computeLineAndOpeners(List<CstToken> toks, boolean[] interpolationBrace,
+            int[] opener, int[] line, List<Integer> firstOfLine) {
+        Deque<Integer> openIdx = new ArrayDeque<>()
+        openIdx.push(-1)
+        int currentLine = 0
+        for (int i = 0; i < toks.size(); i++) {
+            CstToken t = toks[i]
+            // 每一行都要记（含空行与纯注释行），否则行号会与下标错位
+            if (firstOfLine.size() == currentLine) {
+                firstOfLine.add(i)
+            }
+            opener[i] = openIdx.peek().intValue()
+            line[i] = currentLine
+
+            int type = t.type
+            if (type == GroovyLexer.LBRACE && !interpolationBrace[i]) {
+                openIdx.push(i)
+            } else if (type == GroovyLexer.LPAREN || type == GroovyLexer.LBRACK) {
+                openIdx.push(i)
+            } else if (type == GroovyLexer.RBRACE || type == GroovyLexer.RPAREN
+                    || type == GroovyLexer.RBRACK) {
+                if (openIdx.size() > 1) {
+                    openIdx.pop()
+                }
+            }
+            if (CstBuilder.isNewlineToken(t)) {
+                currentLine++
+            }
+        }
+        if (firstOfLine.empty) {
+            firstOfLine.add(0)
+        }
     }
 
     /**

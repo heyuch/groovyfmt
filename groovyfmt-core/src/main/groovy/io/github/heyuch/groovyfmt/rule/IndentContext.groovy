@@ -37,6 +37,23 @@ class IndentContext {
         annotated.parenDepthBefore(lineStartToken)
     }
 
+    /** 本行所在的行号（从 0 开始）。 */
+    int line() {
+        annotated.lineOf(lineStartToken)
+    }
+
+    /**
+     * 本行缩进的<b>锚点行</b>：打开"最内层未闭合括号"的那一行；没有则 -1。
+     *
+     * <p>锚点模型：本行缩进 = 锚点行的缩进 + 一次增量（{@code {} → 块缩进，
+     * {@code (} / {@code [} → 续行缩进）。这与"从第 0 列数几层"在花括号/括号
+     * 嵌在续行里时会给出不同结果，而对普通块体两者一致。
+     */
+    int anchorLine() {
+        int opener = annotated.openerBefore(lineStartToken)
+        opener < 0 ? -1 : annotated.lineOf(opener)
+    }
+
     /** 进入本行时，位于最内层未闭合 {@code {} 之后的 {@code (} / {@code [} 层数。 */
     int parenDepthSinceBrace() {
         annotated.parenDepthSinceBraceBefore(lineStartToken)

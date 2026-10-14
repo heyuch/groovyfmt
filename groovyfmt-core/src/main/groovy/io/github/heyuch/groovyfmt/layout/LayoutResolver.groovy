@@ -40,15 +40,18 @@ class LayoutResolver {
             FormatStyle style, Stats stats) {
         int n = cst.tokenCount
         def out = new ArrayList<String>(n + 1)
+        // 按行顺序把算好的缩进记下来 —— 锚点模型要看"锚点行"的缩进，
+        // 而 resolve 本来就是按 token/行顺序走的，所以边算边记即可。
+        int[] lineIndent = new int[annotated.lineCount()]
         for (int g = 0; g <= n; g++) {
-            out << resolveGap(cst, annotated, registry, style, g, stats)
+            out << resolveGap(cst, annotated, registry, style, g, stats, lineIndent)
         }
         out
     }
 
     @SuppressWarnings('ParameterCount')
     private static String resolveGap(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int g, Stats stats) {
+            FormatStyle style, int g, Stats stats, int[] lineIndent) {
         Gap gap = cst.gaps[g]
         String original = gap.original
 
@@ -71,7 +74,7 @@ class LayoutResolver {
 
         if (annotated.isNewline(g - 1)) {
             stats.verticalGaps++
-            String indent = indentFor(cst, annotated, registry, style, g)
+            String indent = indentFor(cst, annotated, registry, style, g, lineIndent)
             if (indent != original) {
                 stats.changed++
             }
@@ -110,25 +113,128 @@ class LayoutResolver {
         result
     }
 
+    @SuppressWarnings('ParameterCount')
     private static String indentFor(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int lineStartToken) {
+            FormatStyle style, int lineStartToken, int[] lineIndent) {
         if (lineStartToken >= cst.tokenCount) {
             return ''
         }
         def ctx = new IndentContext(cst, annotated, lineStartToken, style)
-        int columns = 0
-        registry.indentRules().each { IndentRule rule ->
-            columns += rule.delta(ctx)
+        int line = annotated.lineOf(lineStartToken)
+
+        Integer anchored = anchoredIndent(annotated, style, lineStartToken, lineIndent)
+        int columns
+        if (anchored != null) {
+            columns = anchored
+        } else {
+            columns = 0
+            registry.indentRules().each { IndentRule rule ->
+                columns += rule.delta(ctx)
+            }
         }
         if (columns <= 0) {
             // 安全兜底：顶层续行（没有任何括号包着，例如 "a +\n    b"）保留原缩进，
             // 否则会把它拍平到第 0 列。后续可以把它提升成一条正式的 IndentRule。
             if (isTopLevelContinuation(annotated, lineStartToken)) {
-                return ctx.originalIndent()
+                String original = ctx.originalIndent()
+                lineIndent[line] = original.length()
+                return original
             }
+            lineIndent[line] = 0
             return ''
         }
+        lineIndent[line] = columns
         ' '.repeat(columns)
+    }
+
+    /**
+     * 锚点模型：本行缩进 = 锚点行的缩进 + 一次增量。返回 {@code null} 表示没有锚点，
+     * 交给原来的"规则增量求和"逻辑（顶层、以及还没建模的形态）。
+     */
+    private static Integer anchoredIndent(Annotated annotated, FormatStyle style,
+            int lineStartToken, int[] lineIndent) {
+        boolean closer = startsWithCloser(annotated, lineStartToken)
+        int opener = annotated.openerBefore(lineStartToken)
+
+        // ① 闭合行：对齐"打开被闭合括号的那一行"。
+        //    必须排在最前 —— 否则 case 规则会把 switch 的 } 也当成 case 体。
+        if (closer) {
+            return opener >= 0 ? lineIndent[annotated.lineOf(opener)] : null
+        }
+
+        // ② 点链续行：以 . 开头的行是"语句级续行"，锚点应是语句首行，
+        //    而不是外面那个块（否则方法体里的点链会只拿到块缩进）。
+        if (annotated.role(lineStartToken) == TokenRole.DOT_LIKE) {
+            int line = annotated.lineOf(lineStartToken)
+            int k = line - 1
+            while (k >= 0 && annotated.role(firstCodeOfLine(annotated, k)) == TokenRole.DOT_LIKE) {
+                k--
+            }
+            return k >= 0 ? lineIndent[k] + style.continuationIndent : null
+        }
+
+        // ③ case 体：标签自身【不】走这条（标签走下面的括号锚点，正好是 switch 行 +4），
+        //    否则 case 标签会互相链式递增。
+        int line = annotated.lineOf(lineStartToken)
+        if (!isCaseLabelLine(annotated, line)) {
+            int caseLine = caseBodyAnchor(annotated, lineStartToken)
+            if (caseLine >= 0) {
+                return lineIndent[caseLine] + style.indentWidth
+            }
+        }
+
+        // ④ 括号锚点：最内层未闭合括号的打开行 + 一次增量
+        if (opener >= 0) {
+            int anchorLine = annotated.lineOf(opener)
+            boolean brace = annotated.topBefore(lineStartToken) == ('{' as char)
+            return lineIndent[anchorLine] + (brace ? style.indentWidth : style.continuationIndent)
+        }
+        null
+    }
+
+    /** 该行的第一个代码 token（跳过空行与纯注释行）。 */
+    private static int firstCodeOfLine(Annotated annotated, int line) {
+        int i = annotated.firstTokenOfLine(line)
+        while (i < annotated.size() && (annotated.isComment(i) || annotated.isNewline(i))) {
+            i++
+        }
+        i
+    }
+
+    /** 该行是否是 case / default 标签行。 */
+    private static boolean isCaseLabelLine(Annotated annotated, int line) {
+        int t = firstCodeOfLine(annotated, line)
+        if (t >= annotated.size()) {
+            return false
+        }
+        int type = annotated.type(t)
+        type == GroovyLexer.CASE || type == GroovyLexer.DEFAULT
+    }
+
+    /** 本行是否是某个 case/default 体的行；是则返回该标签所在行，否则 -1。 */
+    private static int caseBodyAnchor(Annotated annotated, int lineStartToken) {
+        int line = annotated.lineOf(lineStartToken)
+        int depth = annotated.braceDepthBefore(lineStartToken)
+        for (int k = line - 1; k >= 0; k--) {
+            int first = annotated.firstTokenOfLine(k)
+            int d = annotated.braceDepthBefore(first)
+            if (d < depth) {
+                return -1                                     // 已经走出这个块
+            }
+            if (d > depth) {
+                continue                                      // 更深层的行，跳过
+            }
+            int type = annotated.type(first)
+            if (type == GroovyLexer.CASE || type == GroovyLexer.DEFAULT) {
+                return k
+            }
+        }
+        -1
+    }
+
+    private static boolean startsWithCloser(Annotated annotated, int lineStartToken) {
+        int type = annotated.type(lineStartToken)
+        type == GroovyLexer.RBRACE || type == GroovyLexer.RPAREN || type == GroovyLexer.RBRACK
     }
 
     /** 该行是不是上一行表达式的续行（而不是一条新语句）。 */
