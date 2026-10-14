@@ -249,7 +249,12 @@ class LayoutResolver {
             return true
         }
         int prev = annotated.prevCode(first - 1)
-        prev >= 0 && annotated.role(prev) == TokenRole.BINARY_OP
+        if (prev < 0 || annotated.role(prev) != TokenRole.BINARY_OP) {
+            return false
+        }
+        // ARROW 虽然被当作二元运算符，但闭包参数列表的 `->` 是【列表结束】，
+        // 不是表达式片段：`{ a, b ->` 换行后的第一行是闭包体的新语句，不是续行。
+        annotated.type(prev) != GroovyLexer.ARROW
     }
 
     /**
