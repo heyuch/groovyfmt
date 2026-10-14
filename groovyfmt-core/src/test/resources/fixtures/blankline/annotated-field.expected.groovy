@@ -2,8 +2,8 @@ class AnnotatedField {
 
     @Deprecated
     private static final long serialVersionUID = 1L
-    @Deprecated
 
+    @Deprecated
     @SuppressWarnings('unused')
     private String name
 

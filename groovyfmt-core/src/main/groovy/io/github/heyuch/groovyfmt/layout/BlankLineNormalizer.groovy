@@ -244,9 +244,46 @@ class BlankLineNormalizer {
         false
     }
 
+    private static boolean isFirstAnnotationOfDeclaration(Cst cst, int index) {
+        int i = index - 1
+        while (i >= 0 && (cst.tokens[i].comment || cst.tokens[i].type == GroovyLexer.NL)) {
+            i--
+        }
+        if (i <= 0) {
+            return true
+        }
+        int type = cst.tokens[i].type
+        if (type == GroovyLexer.RPAREN) {
+            int depth = 0
+            int j = i
+            while (j >= 0) {
+                int t = cst.tokens[j].type
+                if (t == GroovyLexer.RPAREN) {
+                    depth++
+                } else if (t == GroovyLexer.LPAREN) {
+                    depth--
+                    if (depth == 0) {
+                        break
+                    }
+                }
+                j--
+            }
+            return !(j >= 2 && cst.tokens[j - 1].type == GroovyLexer.CapitalizedIdentifier
+                    && cst.tokens[j - 2].type == GroovyLexer.AT)
+        }
+        if (type == GroovyLexer.Identifier || type == GroovyLexer.CapitalizedIdentifier) {
+            return cst.tokens[i - 1].type != GroovyLexer.AT
+        }
+        true
+    }
+
     @SuppressWarnings('CyclomaticComplexity')
     private static boolean startsAnnotatedField(Cst cst, ParseContextIndex parseIndex, int index) {
         if (index < 0 || index >= cst.tokenCount || cst.tokens[index].type != GroovyLexer.AT) {
+            return false
+        }
+        // 只有【列表的第一个】注解才能触发插空行。
+        if (!isFirstAnnotationOfDeclaration(cst, index)) {
             return false
         }
         // 只有【类体】里的字段才适用这条规则。
@@ -289,7 +326,8 @@ class BlankLineNormalizer {
                 }
                 j++
             }
-            while (j < cst.tokenCount && cst.tokens[j].comment) {
+            while (j < cst.tokenCount && (cst.tokens[j].comment
+                            || cst.tokens[j].type == GroovyLexer.NL)) {
                 j++
             }
         }
