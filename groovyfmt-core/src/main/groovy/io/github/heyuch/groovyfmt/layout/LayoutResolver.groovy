@@ -244,6 +244,11 @@ class LayoutResolver {
                 // 信号取语法级：{ 前一个有效 token 是 ')'（即 new X(...) { 形式）⇒ 匿名类。
                 // 曾用过"行首 token 是 primary"，但那只在 new 起行时成立；真实代码里行首是
                 // 字符串字面量（"... " + \n "...", new X() {），于是从未触发。
+                // 匿名类【独占一行】且上一个有效 token 是逗号（即参数表续行）时，
+                // CodeNarc 期望 20（续行+4），成员要再深一级；
+                // 其余情形（类跟在实参后面、等号后等）期望 12（语句块+4）。
+                && !(cst.tokens[firstCode].text == 'new'
+                        && previousCodeTokenText(cst, firstCode) == ',')
                 && tokenBeforeIsCloseParen(cst, braceToken)
                 && index.innermostAt(cst.tokens[braceToken].start) == 'classBody') {
             int limit = Math.max(0, braceLine - 40)
@@ -273,6 +278,15 @@ class LayoutResolver {
             i--
         }
         i >= 0 && cst.tokens[i].text == ')'
+    }
+
+    /** 向前找第一个有效 token 的文本（跳过注释与 NL）。 */
+    private static String previousCodeTokenText(Cst cst, int index) {
+        int i = index - 1
+        while (i >= 0 && (cst.tokens[i].comment || cst.tokens[i].type == GroovyLexer.NL)) {
+            i--
+        }
+        i >= 0 ? cst.tokens[i].text : ''
     }
 
     /** 该行是否是一个类声明行（实测：它的 innermost 是修饰符节点）。 */
