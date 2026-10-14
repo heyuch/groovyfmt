@@ -4,7 +4,7 @@ import groovy.transform.CompileStatic
 
 import org.apache.groovy.parser.antlr4.GroovyLexer
 
-import io.github.heyuch.groovyfmt.annotate.ConstructIndex
+import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
 import io.github.heyuch.groovyfmt.annotate.SlotClassifier
 import io.github.heyuch.groovyfmt.annotate.TokenAnnotator.Annotated
 import io.github.heyuch.groovyfmt.cst.Cst
@@ -40,7 +40,7 @@ class LayoutResolver {
     // ParameterCount：这里是整条管道的传递，拆成上下文对象反而看不清哪一步在用什么；属非格式化规则。
     @SuppressWarnings('ParameterCount')
     static List<String> resolve(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, Stats stats, ConstructIndex index) {
+            FormatStyle style, Stats stats, ParseContextIndex index) {
         int n = cst.tokenCount
         def out = new ArrayList<String>(n + 1)
         // 按行顺序把算好的缩进记下来 —— 锚点模型要看"锚点行"的缩进，
@@ -54,7 +54,7 @@ class LayoutResolver {
 
     @SuppressWarnings('ParameterCount')
     private static String resolveGap(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int g, Stats stats, int[] lineIndent, ConstructIndex index) {
+            FormatStyle style, int g, Stats stats, int[] lineIndent, ParseContextIndex index) {
         Gap gap = cst.gaps[g]
         String original = gap.original
 
@@ -118,14 +118,14 @@ class LayoutResolver {
 
     @SuppressWarnings('ParameterCount')
     private static String indentFor(Cst cst, Annotated annotated, RuleRegistry registry,
-            FormatStyle style, int lineStartToken, int[] lineIndent, ConstructIndex index) {
+            FormatStyle style, int lineStartToken, int[] lineIndent, ParseContextIndex index) {
         if (lineStartToken >= cst.tokenCount) {
             return ''
         }
         def ctx = new IndentContext(cst, annotated, lineStartToken, style)
         int line = annotated.lineOf(lineStartToken)
 
-        Integer anchored = anchoredIndent(annotated, style, lineStartToken, lineIndent, index)
+        Integer anchored = anchoredIndent(cst, annotated, style, lineStartToken, lineIndent, index)
         int columns
         if (anchored != null) {
             columns = anchored
@@ -155,8 +155,8 @@ class LayoutResolver {
      * 交给原来的"规则增量求和"逻辑（顶层、以及还没建模的形态）。
      */
     @SuppressWarnings('ParameterCount')
-    private static Integer anchoredIndent(Annotated annotated, FormatStyle style,
-            int lineStartToken, int[] lineIndent, ConstructIndex index) {
+    private static Integer anchoredIndent(Cst cst, Annotated annotated, FormatStyle style,
+            int lineStartToken, int[] lineIndent, ParseContextIndex index) {
         boolean closer = startsWithCloser(annotated, lineStartToken)
         int opener = annotated.openerBefore(lineStartToken)
 
@@ -180,7 +180,7 @@ class LayoutResolver {
         //    为什么只让它否定：实测过让它肯定会在真实代码上过度应用（CodeNarc Indentation 从 0 涨到 161）。
         //    只减不增，风险才可控。
         int curLine = annotated.lineOf(lineStartToken)
-        boolean indexVetoes = index != null && index.startsStatement(curLine)
+        boolean indexVetoes = vetoesNewStatement(cst, annotated, index, curLine)
         if (!indexVetoes && isContinuationLine(annotated, curLine)) {
             int line = annotated.lineOf(lineStartToken)
             int k = line - 1
@@ -326,6 +326,31 @@ class LayoutResolver {
             }
         }
         -1
+    }
+
+    /**
+     * parse tree 说这一行开始了一个新的语句级构造 → 它不是续行。
+     *
+     * <p>这是"一元加是新语句、不是续行"那一条的精确形式：
+     * {@code ruleStartsAt(offset, 'statement')} 直接问 parse tree，不再依赖行号推导。
+     *
+     * <p>只能否定、不能肯定：上一次让推导结构去肯定续行，
+     * 68 个 fixture 全过而真实代码的 Indentation 从 0 涨到 161。
+     */
+    private static boolean vetoesNewStatement(Cst cst, Annotated annotated,
+            ParseContextIndex index, int line) {
+        if (index == null) {
+            return false
+        }
+        int code = firstCodeOfLine(annotated, line)
+        if (code < 0 || code >= cst.tokenCount) {
+            return false
+        }
+        int offset = cst.tokens[code].start
+        index.ruleStartsAt(offset, 'statement')
+        || index.ruleStartsAt(offset, 'scriptStatement')
+        || index.ruleStartsAt(offset, 'localVariableDeclaration')
+        || index.ruleStartsAt(offset, 'variableDeclaration')
     }
 
     private static boolean startsWithCloser(Annotated annotated, int lineStartToken) {
