@@ -213,6 +213,14 @@ class TokenAnnotator {
 
     @SuppressWarnings(['AbcMetric', 'CyclomaticComplexity', 'MethodSize'])   // 词法状态机，分支密度即规范
     static Annotated annotate(Cst cst) {
+        annotate(cst, null)
+    }
+
+    /** 带语法上下文索引的版本；索引为 null 时全部退回词法判据。 */
+    // AbcMetric / CyclomaticComplexity / MethodSize：这是整个词法注解状态机，
+    // 拆开反而让"状态如何推进"难以跟踪；属非格式化规则。
+    @SuppressWarnings(['AbcMetric', 'CyclomaticComplexity', 'MethodSize'])
+    static Annotated annotate(Cst cst, ParseContextIndex parseIndex) {
         List<CstToken> toks = cst.tokens
         int n = toks.size()
         def roles = new TokenRole[n]
@@ -319,7 +327,7 @@ class TokenAnnotator {
             roles[i] = classifyToken(prevType, type)
 
             if (type == GroovyLexer.QUESTION) {
-                if (isWildcardQuestion(toks, i)) {
+                if (isWildcardQuestion(toks, i, parseIndex)) {
                     // 泛型通配符不是三元运算符：不能压 ternary 栈，
                     // 否则后面第一个冒号会被误判成三元冒号。
                     roles[i] = TokenRole.QUESTION_WILDCARD
@@ -367,8 +375,15 @@ class TokenAnnotator {
      * <p>这是纯局部判据，不需要知道是否在泛型里 —— 三元运算符后面不会出现这四者
      * （{@code x ? extends y : z} 不是合法 Groovy）。
      */
-    private static boolean isWildcardQuestion(List<CstToken> toks, int index) {
-        int next = nextCodeToken(toks, index + 1)
+    private static boolean isWildcardQuestion(List<CstToken> toks, int tokenIndex,
+            ParseContextIndex parseIndex) {
+        // 优先问 parse tree：泛型通配符一定在 typeArguments 之下，三元的 ? 不会。
+        // 这比"下一个 token 是 extends/super/&gt;/就算通配符"可靠 —— 后者是一条假设（
+        // 虽然语法上这四者不会跟在三元的 ? 后面，但那是推理出来的）。
+        if (parseIndex != null) {
+            return parseIndex.insideAt(toks[tokenIndex].start, 'typeArguments')
+        }
+        int next = nextCodeToken(toks, tokenIndex + 1)
         if (next < 0) {
             return false
         }

@@ -68,10 +68,11 @@ class Formatter {
             return new FormatResult(pre, pre != input, false, null, stats, ruleCount)
         }
 
-        def annotated = TokenAnnotator.annotate(cst)
         // 语法上下文索引（parse tree）：按字符偏移回答"这里在哪个构造里"。
-        // 构建失败返回 null，缩进规则会自动退回词法判据。
+        // 必须在注解之前建好 —— 角色判定（如泛型通配符）也要用它。
+        // 构建失败返回 null，各处会自动退回词法判据。
         ParseContextIndex index = ParseContextIndex.build(pre)
+        def annotated = TokenAnnotator.annotate(cst, index)
         List<String> gaps = LayoutResolver.resolve(cst, annotated, registry, style, stats, index)
 
         // 空行规范化：这是唯一会增删 token 的环节（插/删 NL token）。
