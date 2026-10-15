@@ -7,7 +7,7 @@ class TenantOpQueryServiceImpl {
 
             @Override
             Map mapRow(ResultSet rs, int rowNum) throws SQLException {
-                return [opId: rs.getString(1), tenantCode: rs.getString(2)]
+                return [opId:rs.getString(1), tenantCode:rs.getString(2)]
             }
 
         }, TenantConst.TENANT_OP_STATUS_APPROVED)

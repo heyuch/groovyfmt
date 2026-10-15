@@ -5,4 +5,8 @@
 #
 # 说明：本项目的 map 字面量风格是 [k: v] 与 [k:v] 混用的历史风格，与 CodeNarc 默认
 # 配置（要求冒号后无空格？有空格？）不一致 —— 这一条是【项目配置差异】，不是缺陷。
-SpaceAroundMapEntryColon *
+#
+# 2026-02 变更：这里原本登记过 SpaceAroundMapEntryColon（项目历史风格是 [k: v]，
+# 与 CodeNarc 默认不一致）。现已让默认规则对齐 CodeNarc 默认 —— 实测其默认只接受
+# [k:v]（[k: v] / [k :v] / [k : v] 都报违规，具名参数同理），所以该规则不再需要豁免，
+# 这条登记已删除。

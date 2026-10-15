@@ -4,7 +4,7 @@ class TwoShapes {
         def trailing = run("some long argument string here", new RowMapper<Map<String, String>>() {
 
             Map mapRow(ResultSet rs, int rowNum) {
-                return [a: 1]
+                return [a:1]
             }
 
         })
@@ -12,7 +12,7 @@ class TwoShapes {
                 new RowMapper<Map<String, String>>() {
 
                     Map mapRow(ResultSet rs, int rowNum) {
-                        return [a: 1]
+                        return [a:1]
                     }
 
                 })

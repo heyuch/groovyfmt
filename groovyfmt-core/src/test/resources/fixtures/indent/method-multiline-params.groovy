@@ -3,12 +3,12 @@ class MultiLineParams {
     private static OutputHfRenderUnit buildRenderUnit(OutputStepDO outputStep,
             OutputHfRenderProfile renderProfile) {
         OutputHfStepDomain stepDomain = new OutputHfStepDomain(
-                stepDomainId: outputStep.stepId,
-                boundaryStep: outputStep
+                stepDomainId:outputStep.stepId,
+                boundaryStep:outputStep
         )
         return new OutputHfRenderUnit(
-                sourceStep: outputStep,
-                stepDomain: stepDomain
+                sourceStep:outputStep,
+                stepDomain:stepDomain
         )
     }
 
