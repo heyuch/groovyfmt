@@ -29,7 +29,11 @@ class ColonSpacingRule extends MappedSpacingRule {
         Map<Slot, Spacing> m = [:]
         m[Slot.BEFORE_COLON] = Spacing.NONE
         m[Slot.AFTER_COLON] = Spacing.NONE
-        m[Slot.AFTER_NAMED_ARG_COLON] = Spacing.SPACE
+        // 默认与 map entry 一致：都不加空格，跟 CodeNarc 的 SpaceAroundMapEntryColon 默认
+        // （characterAfterColonRegex = /\S/）。将来若用户要具名实参加空格，应由
+        // codenarc-fix-plugin 读 codenarc.xml 的该属性并映射到本槽位 —— 属性对两者同时生效，
+        // 所以插件侧只能表达"全紧"或"全松"。
+        m[Slot.AFTER_NAMED_ARG_COLON] = Spacing.NONE
         m[Slot.BEFORE_TERNARY_COLON] = Spacing.SPACE
         m[Slot.AFTER_TERNARY_COLON] = Spacing.SPACE
         // for (X x : xs) —— 两侧都要空格

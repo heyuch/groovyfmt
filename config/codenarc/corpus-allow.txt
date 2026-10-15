@@ -10,10 +10,11 @@
 # 与 CodeNarc 默认不一致）。现已让默认规则对齐 CodeNarc 默认 —— 实测其默认只接受
 # [k:v]（[k: v] / [k :v] / [k : v] 都报违规，具名参数同理），所以该规则不再需要豁免，
 # 这条登记已删除。
-
 # 有意的不一致：具名实参保留 k: v（与代码库既有风格一致），而 CodeNarc 的
 # SpaceAroundMapEntryColon 默认区分不了"具名实参"与"Map 字面量"（两者叶子节点都是 mapEntry），
 # 因此这些文件里具名实参的空格会被它报出来。我们的立场：Map 字面量跟默认（k:v），
 # 具名实参不跟 —— 依据是解析树（祖先链里有无 map）能区分二者，而这条规则做不到。
-SpaceAroundMapEntryColon indent/call-args-nested-brackets.expected.groovy
-SpaceAroundMapEntryColon spacing/named-arg-colon.expected.groovy
+#
+# 2026-02：具名实参曾一度要求 k: v（与代码库既有风格一致），因而登记过
+# SpaceAroundMapEntryColon。按"默认完全遵守 CodeNarc"的决定，具名实参与 map entry
+# 一样都不加空格，所以豁免已全部删除 —— 本文件目前为空（只有这段说明）。
