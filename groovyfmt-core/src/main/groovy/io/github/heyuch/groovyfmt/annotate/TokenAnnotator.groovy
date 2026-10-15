@@ -318,8 +318,16 @@ class TokenAnnotator {
                     roles[i] = TokenRole.COLON_FOR_IN
                 } else {
                     char enclosing = stack.peek().charValue()
-                    roles[i] = (enclosing == ('(' as char) || enclosing == ('[' as char)) ?
-                    TokenRole.COLON_NAMED_OR_MAP : TokenRole.COLON_UNKNOWN
+                    if (enclosing == ('(' as char) || enclosing == ('[' as char)) {
+                        // Groovy 把具名实参建成隐式 Map，所以两者的叶子节点都是 mapEntry；
+                        // 区别在祖先链（实测遍历全部 165 条规则问 insideAt 得到）：
+                        //   纯 Map 字面量 / 显式传 map -> ... map < mapEntryList < mapEntry
+                        //   具名实参                    -> ... mapEntry < arguments | creator
+                        roles[i] = parseIndex?.insideAt(toks[i].start, 'map') ?
+                        TokenRole.COLON_NAMED_OR_MAP : TokenRole.COLON_NAMED_ARG
+                    } else {
+                        roles[i] = TokenRole.COLON_UNKNOWN
+                    }
                 }
                 continue
             }

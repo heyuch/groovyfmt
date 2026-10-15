@@ -441,7 +441,8 @@ class LayoutResolver {
             TokenRole role = annotated.role(prev)
             if (role == TokenRole.BINARY_OP || role == TokenRole.UNARY_PREFIX
                     || role == TokenRole.COMMA || role == TokenRole.DOT_LIKE
-                    || role == TokenRole.COLON_TERNARY || role == TokenRole.COLON_NAMED_OR_MAP) {
+                    || role == TokenRole.COLON_TERNARY || role == TokenRole.COLON_NAMED_OR_MAP
+                    || role == TokenRole.COLON_NAMED_ARG) {
                 return true
             }
             int type = annotated.type(prev)

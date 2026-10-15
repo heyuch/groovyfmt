@@ -46,6 +46,9 @@ enum TokenRole {
     /** for (X x : xs) 里的冒号 —— 两侧都要空格。 */
     COLON_FOR_IN,
     COLON_NAMED_OR_MAP,
+
+    /** 具名实参的冒号（foo(a: 1)、new X(a: 1)）——注意它不是 Map 字面量 */
+    COLON_NAMED_ARG,
     /** case / default / label / assert 消息的冒号 —— 一律不表态。 */
     COLON_UNKNOWN,
 

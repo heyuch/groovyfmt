@@ -44,6 +44,9 @@ enum Slot {
     BEFORE_COLON,
     AFTER_COLON,
 
+    /** 具名实参的冒号之后：foo(a: 1) —— 与 Map 字面量的 [a:1] 不同槽 */
+    AFTER_NAMED_ARG_COLON,
+
     /** 三元表达式：a ? b : c */
     BEFORE_TERNARY_COLON,
     AFTER_TERNARY_COLON,

@@ -111,7 +111,7 @@ class SlotClassifier {
             if (nr == TokenRole.COLON_TERNARY) {
                 return Slot.BEFORE_TERNARY_COLON
             }
-            if (nr == TokenRole.COLON_NAMED_OR_MAP) {
+            if (nr == TokenRole.COLON_NAMED_OR_MAP || nr == TokenRole.COLON_NAMED_ARG) {
                 return Slot.BEFORE_COLON
             }
             if (nr == TokenRole.COLON_FOR_IN) {
@@ -147,6 +147,10 @@ class SlotClassifier {
         }
         if (pr == TokenRole.COLON_NAMED_OR_MAP) {
             return Slot.AFTER_COLON
+        }
+        // 具名实参：保留 k: v（与代码库既有风格一致）。
+        if (pr == TokenRole.COLON_NAMED_ARG) {
+            return Slot.AFTER_NAMED_ARG_COLON
         }
         if (pr == TokenRole.COLON_FOR_IN) {
             return Slot.AFTER_FOR_IN_COLON
