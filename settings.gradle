@@ -1,3 +1,30 @@
+plugins {
+    // 机器上没有 JDK 17 时自动下载，而不是要求手工安装。
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+
+    // 走 Central Portal 的 publisher API。旧的 OSSRH staging 仓库已关停，
+    // 这是目前通往 Maven Central 的唯一可用路径。
+    id 'com.gradleup.nmcp.settings' version '1.6.2'
+}
+
+nmcpSettings {
+    centralPortal {
+        // 解析成普通字符串，而不是把 Provider 传进去。nmcpSettings 会在 settings 上注册一个
+        // GradleLifecycle 回调，回调捕获了整个 centralPortal 配置对象，而 Gradle 会对这个
+        // 回调做隔离（序列化）。Property 里塞 Provider 过不了这一步 ——
+        // ValueSourceProvider 不可序列化 —— 构建会在任何任务开始前就报
+        // "Failed to isolate 'GradleLifecycle' action"。
+        // 代价是凭据只在配置期读一次，对 CI 而言本来就是这样。
+        username = providers.environmentVariable('MAVEN_CENTRAL_USERNAME').getOrElse('')
+        password = providers.environmentVariable('MAVEN_CENTRAL_PASSWORD').getOrElse('')
+        // AUTOMATIC：校验一通过就公开。Central 上的坐标永久保留、不可撤回，
+        // 所以想先人工看一眼上传的 bundle，用下面的开关覆盖：
+        //   ./gradlew publishAggregationToCentralPortal -PcentralPublishingType=USER_MANAGED
+        // 那样部署会停在 VALIDATED，等你在 Portal 页面上手动发布。
+        publishingType = providers.gradleProperty('centralPublishingType').getOrElse('AUTOMATIC')
+    }
+}
+
 rootProject.name = 'groovyfmt'
 
 // 两个 module，职责严格分开：

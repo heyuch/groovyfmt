@@ -6,6 +6,9 @@
 // 不要再自己调 addStep(GroovyFmt.step())，会得到 "Multiple steps with name 'groovyfmt'"。
 plugins {
     id 'java-gradle-plugin'
+    // Publishes to plugins.gradle.org. First submissions are reviewed by hand and take days;
+    // that is expected, not a failure.
+    id 'com.gradle.plugin-publish' version '2.2.1'
 }
 
 dependencies {
@@ -18,10 +21,41 @@ dependencies {
 }
 
 gradlePlugin {
+    // Portal 要求提交里带上这两个
+    website = 'https://github.com/heyuch/groovyfmt'
+    vcsUrl = 'https://github.com/heyuch/groovyfmt.git'
+
     plugins {
         groovyfmt {
             id = 'io.github.heyuch.groovyfmt'
             implementationClass = 'io.github.heyuch.groovyfmt.gradle.GroovyFmtPlugin'
+            displayName = 'groovyfmt'
+            description = 'Runs the groovyfmt formatter as a step inside Spotless, with no boilerplate'
+            tags.set(['formatting', 'formatter', 'spotless', 'groovy', 'code-style'])
+
+            // Portal 现在要求声明：不声明自 plugin-publish 2.1.0 起是 deprecated，
+            // 未来版本会直接拒绝提交；而且一旦声明，后续版本必须继续声明。
+            //
+            // configurationCache 声明 false，这是实测结论而非保守取值。拿一个消费方工程
+            // （应用本插件 + Spotless，跑 --configuration-cache）验过：插件的 apply() 本身
+            // 没问题——第一次运行能 "Configuration cache entry stored"——但执行期报
+            //
+            //   Could not load the value of field `classpath` of
+            //   io.github.heyuch.groovyfmt.spotless.GroovyFmtStep bean
+            //
+            // 因为 GroovyFmtStep 用 List.copyOf 保存 classpath，而它产生的是
+            // java.util.ImmutableCollections$ListN，Gradle 的 CC 序列化器读不了这种内部类型。
+            // 改成 new ArrayList<>(classpath) 后大概率就能声明 true（相等性语义不变，
+            // List 的 equals 是按内容比的），但那是改 groovyfmt-spotless 的源码，不在本次范围。
+            //
+            // isolatedProjects 声明 false：本仓库 root build 用 subprojects{} 做跨工程配置，
+            // 那是 Isolated Projects 明确不允许的。
+            compatibility(it) {
+                features {
+                    configurationCache = false
+                    isolatedProjects = false
+                }
+            }
         }
     }
 }

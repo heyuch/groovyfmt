@@ -65,7 +65,7 @@ Groovy 生态里**没有 `gofmt` / `ktfmt` 级别的格式化器**。现存的�
 
 ## 快速开始
 
-需要 JDK 17。
+构建用 JDK 17。缺失的 toolchain 由 foojay 自动下载，不需要手工安装。
 
 ```bash
 git clone <repo> && cd groovy-fmt
@@ -292,7 +292,7 @@ groovyfmt 的契约是：
 
 ### 环境与常用命令
 
-需要 JDK 17。
+构建用 JDK 17。缺失的 toolchain 由 foojay 自动下载，不需要手工安装。
 
 ```bash
 ./build.sh                      # 编译 + 完整闸门（= ./gradlew check）

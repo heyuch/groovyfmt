@@ -39,25 +39,112 @@ plugins {
 }
 
 // subprojects{} 是"跨工程配置"，规模变大、或各 module 需要不同配置子集时再换 convention plugin。
-subprojects {
+subprojects { sub ->
+    // 每个模块的 POM description —— Central 要求 description 非空
+    def moduleDescriptions = [
+            'groovyfmt-core'         : 'The groovyfmt formatter itself: tokens/CST, rules, arbitration and rendering, plus a CLI',
+            'groovyfmt-spotless'     : 'Spotless adapter that runs groovyfmt through an isolated classloader',
+            'groovyfmt-gradle-plugin': 'Gradle plugin that wires groovyfmt into the Spotless groovy DSL',
+            'groovyfmt-codenarc'     : 'CodeNarc rules that keep formatting rules from being exempted',
+    ]
+
     apply plugin: 'groovy'
     apply plugin: 'codenarc'
     apply plugin: 'maven-publish'
+    apply plugin: 'signing'
 
     group = project.property('projectGroup')
     version = groovyfmtVersion
+
+    // 取成本地变量再用：POM 元数据写在嵌套的 pom{} 闭包里，那里 project 会顺着
+    // owner 链落到 root 工程上，project.name 就不再是本模块的名字了。
+    def moduleName = sub.name
+    def moduleCoordinates = "${group}:${moduleName}"
 
     repositories {
         mavenCentral()
     }
 
+    java {
+        // toolchain 而不只是 release/targetCompatibility：它决定编译器能看见哪些 JDK API。
+        // 只钉字节码等级的话，Groovy 源码可以在更新的 JDK 上悄悄用上更新的 API
+        // （options.release 只约束 .java），产出的 jar 要到使用者的机器上才会炸。
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+        // Central 强制要求每个构件都带 -sources.jar 与 -javadoc.jar，缺一个 bundle 就校验失败。
+        // 本仓库 main 源码全是 Groovy，而 javadoc 任务只处理 .java ⇒ javadoc jar 内容近乎为空。
+        // 校验只要求文件存在，所以能过；要用 groovydoc 填内容需另行配置。
+        withSourcesJar()
+        withJavadocJar()
+    }
+
     // publishToMavenLocal == mvn install（装到 ~/.m2/repository）
-    publishing {
-        publications {
-            maven(MavenPublication) {
-                from components.java
+    //
+    // ':groovyfmt-gradle-plugin' 必须排除：java-gradle-plugin 已经自建了 pluginMaven
+    // publication，坐标与这里要建的 maven publication 完全相同
+    // （io.github.heyuch:groovyfmt-gradle-plugin:<version>）。两个一起进 Central 的
+    // bundle 会出现重复路径，校验直接失败。
+    //
+    // 只能按路径判断，不能问 plugins.hasPlugin('java-gradle-plugin')：subprojects{}
+    // 在 root 求值期就执行，那时该模块自己的 build.gradle 还没被读取，插件尚未应用。
+    if (sub.path != ':groovyfmt-gradle-plugin') {
+        publishing {
+            publications {
+                maven(MavenPublication) {
+                    from components.java
+                }
             }
         }
+    }
+
+    // 给本模块【所有】publication 补 Central 要求的四段元数据。用 configureEach 而不是
+    // 直接引用：插件模块的 publication 由 java-gradle-plugin 在更晚的时候创建。
+    publishing.publications.configureEach { pub ->
+        pub.pom {
+            name = moduleCoordinates
+            description = moduleDescriptions[moduleName]
+            url = 'https://github.com/heyuch/groovyfmt'
+            licenses {
+                license {
+                    name = 'The Apache License, Version 2.0'
+                    url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    distribution = 'repo'
+                }
+            }
+            developers {
+                developer {
+                    id = 'heyuch'
+                    name = 'yuchuan.he'
+                    url = 'https://github.com/heyuch'
+                }
+            }
+            scm {
+                url = 'https://github.com/heyuch/groovyfmt'
+                connection = 'scm:git:https://github.com/heyuch/groovyfmt.git'
+                developerConnection = 'scm:git:ssh://git@github.com/heyuch/groovyfmt.git'
+            }
+        }
+    }
+
+    // 签名密钥从环境变量取；本地没有密钥时整体跳过，开发机上的 publishToMavenLocal 照常可用。
+    def moduleSigningKey = providers.environmentVariable('MAVEN_GPG_KEY')
+    // getOrNull() 而不是 isPresent：environmentVariable() 返回的是 Gradle 内部的
+    // ValueSourceProvider，它不向 Groovy DSL 暴露 isPresent。
+    def moduleCanSign = moduleSigningKey.getOrNull() != null
+    signing {
+        required = moduleCanSign
+        if (moduleCanSign) {
+            // 这里必须用 getOrElse('') 而不是 orNull。Gradle 的 useInMemoryPgpKeys 把 null
+            // 口令视为"没有提供密钥"，会静默地什么都不配置 —— 随后 required=true 的签名任务
+            // 在运行期报 "no configured signatory"。实测对照：
+            //   useInMemoryPgpKeys(key, null) -> signatory 为 null
+            //   useInMemoryPgpKeys(key, "")    -> signatory 正常
+            useInMemoryPgpKeys(moduleSigningKey.get(),
+                    providers.environmentVariable('MAVEN_GPG_PASSPHRASE').getOrElse(''))
+        }
+        // 签整个容器：插件模块的 pluginMaven 与 marker publication 创建得更晚。
+        sign publishing.publications
     }
 
     // Groovy 版本策略按 module 区分，所以这里不统一覆盖 groovyClasspath（见各 module 的构建文件）
