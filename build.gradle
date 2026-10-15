@@ -33,6 +33,9 @@ buildscript {
 plugins {
     id 'base'
     id 'com.diffplug.spotless' version '8.10.2'
+    // 字节码级静态分析：Groovy 也能用（SpotBugs 分析 .class），源码级语义规则另有 CodeNarc。
+    // apply false + subprojects 里 apply：版本号只在一处声明。
+    id 'com.github.spotbugs' version '6.5.13' apply false
 }
 
 // subprojects{} 是"跨工程配置"，规模变大、或各 module 需要不同配置子集时再换 convention plugin。
@@ -103,6 +106,28 @@ subprojects {
         maxPriority1Violations = 0
         maxPriority2Violations = 0
         maxPriority3Violations = 0
+    }
+
+    // ── SpotBugs：分析编译产物（字节码），与 CodeNarc（源码规则）互补 ──
+    apply plugin: 'com.github.spotbugs'
+    spotbugs {
+        effort = 'max'
+        reportLevel = 'low'
+        // 排除规则：每条都写明实测根因，见文件内注释。
+        excludeFilter = rootProject.file('config/spotbugs/exclude.xml')
+        // 阻断式：残留为 0 才翻成 false（每一条排除都在 exclude.xml 里写明依据）。
+        ignoreFailures = false
+    }
+    tasks.withType(com.github.spotbugs.snom.SpotBugsTask).configureEach {
+        reports {
+            html.required = true
+            xml.required = true
+        }
+    }
+
+    // 挂进 check：字节码级发现必须能让构建变红，否则等于没接
+    tasks.named('check') {
+        dependsOn 'spotbugsMain'
     }
 
     // 只分析源码，不含 src/test/resources 下故意写乱/非法的语料

@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs 排除规则 —— 每一条都必须写明【实测到的根因】，不接受"看着烦就排掉"。
+
+  Groovy 把大量逻辑编译成字节码（真值判断、属性访问、@Immutable/@CompileStatic 生成的成员、
+  闭包类、meta-class 持有字段），SpotBugs 只看字节码，因此这些**必然**会命中。
+  下面每条的根因都是在本工程上实测确认过的（命令见文件末尾注释）。
+
+  另外注意：SpotBugs 对 Groovy 字节码的【行号定位不可靠】——
+  它会把问题指到构造函数声明行或无关行。定位请用报告里的 <Method name="...">，不要用行号。
+-->
+<FindBugsFilter>
+
+  <!-- ═══ Groovy 编译器生成的静态 meta-class 字段 ═══
+       __$stMC 由编译器生成并用反射赋值，源码里不存在，因此"应当 final""transient 未恢复"都不适用。 -->
+  <Match>
+    <Bug pattern="MS_SHOULD_BE_FINAL"/>
+    <Field name="__$stMC"/>
+  </Match>
+  <Match>
+    <Bug pattern="SE_TRANSIENT_FIELD_NOT_RESTORED"/>
+    <Field name="__$stMC"/>
+  </Match>
+
+  <!-- ═══ Groovy 生成的构造函数调用 ═══
+       每个 Groovy 类的构造函数都会调用编译器生成的 $getStaticMetaClass()，它必然可被覆盖。 -->
+  <Match>
+    <Bug pattern="MC_OVERRIDABLE_METHOD_CALL_IN_CONSTRUCTOR"/>
+    <Method name="$getStaticMetaClass"/>
+  </Match>
+
+  <!-- ═══ 闭包类：编译器生成，不是我们的类 ═══
+       Foo$_bar_closure1 这类是编译器为每个闭包生成的，其构造签名与 Serializable 都由编译器决定。 -->
+  <Match>
+    <Bug pattern="SE_NO_SERIALVERSIONID"/>
+    <Class name="~.*\$_?[a-zA-Z0-9_]*_?closure\d+.*"/>
+  </Match>
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+    <Class name="~.*\$_?[a-zA-Z0-9_]*_?closure\d+.*"/>
+  </Match>
+
+  <!-- ═══ @Immutable 生成的方法 ═══
+       本工程的 CstToken / Gap 标了 @Immutable（源码里既没有 hashCode 也没有 _toString）。
+       生成器用引用比较实现 hashCode，并把 toString 委托给私有的 _toString ——
+       SpotBugs 看不到这层委托，于是报"指针比较"和"私有方法无人调用"。 -->
+  <Match>
+    <Bug pattern="EC_UNRELATED_TYPES_USING_POINTER_EQUALITY"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+    <Method name="hashCode"/>
+  </Match>
+  <Match>
+    <Bug pattern="UPM_UNCALLED_PRIVATE_METHOD"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+    <Method name="_toString"/>
+  </Match>
+
+  <!-- ═══ Groovy 真值判断 / 属性访问生成的 null 检查 ═══
+       `if (errors)`、`if (files.empty)` 这类写法在字节码里就是"判空 + asBoolean"，
+       而 errors/files 在源码中是刚 new 出来的局部变量，永远非 null。
+       实测样本：CstBuilder.build 的 errors、Main.main 的 files、LineWrapper.binaryOperatorLength 的 ops。
+
+       取舍说明（诚实记录）：这两条按【包】放开，因此会同时屏蔽这两类问题在
+       io.github.heyuch.groovyfmt 下的真实出现。之所以接受，是因为 Groovy 的真值判断/
+       属性访问遍布全代码，逐条压制不可维护；若将来真出现这类缺陷，
+       应把规则收窄到具体类或方法，而不是继续放宽这里。 -->
+  <Match>
+    <Bug pattern="RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+  </Match>
+  <Match>
+    <Bug pattern="NP_LOAD_OF_KNOWN_NULL_VALUE"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+  </Match>
+
+  <!-- ═══ 内部不可变值对象按约定共享数组/token，不做防御性拷贝 ═══
+       这是【设计决定】而不是已证实的误报：这些对象在内部流转、由约定保证不被改写，
+       拷贝会落在热路径上。若要收紧，应先引入真正的不可变容器，而不是删掉这条。 -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+  </Match>
+
+  <!-- ═══ CLI 的退出码契约 ═══
+       Main 里的 System.exit 就是命令行工具的返回值契约（见 CLI 退出码契约测试），是有意为之。 -->
+  <Match>
+    <Bug pattern="DM_EXIT"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\.cli\.Main"/>
+  </Match>
+
+  <!-- ═══ Groovy 动态调用点：编译器为每个类/闭包生成的 $callSiteArray ═══
+       Groovy 3（Gradle 自带的那份）用 callSite 数组做动态派发，数组由编译器生成、
+       由 $getCallSiteArray 懒初始化，因此"静态字段应懒初始化"这条不适用。 -->
+  <Match>
+    <Bug pattern="LI_LAZY_INIT_STATIC"/>
+    <Field name="$callSiteArray"/>
+  </Match>
+
+  <!-- ═══ Groovy 的 metaClass 字段 ═══
+       每个 Groovy 对象都有编译器管理的 metaClass；它被标 transient 是编译器行为。 -->
+  <Match>
+    <Bug pattern="SE_TRANSIENT_FIELD_NOT_RESTORED"/>
+    <Field name="metaClass"/>
+  </Match>
+
+  <!-- ═══ MC_：每个 Groovy 构造函数都会调用生成的 $getStaticMetaClass() ═══
+       实测：core 模块【每一个类】都命中这条（26/26），也就是说这条规则在 Groovy 上
+       对"构造函数里调可覆盖方法"的真实缺陷没有分辨力 —— 报告里的 <Method> 只会是 <init>，
+       被调方法名只出现在消息文本里，filter 拿不到。
+
+       取舍（诚实记录）：按包放开。这会同时屏蔽真实的"构造函数里调用可覆盖方法"。
+       若将来要恢复这条规则的分辨力，需要写自定义 detector 或改用能区分被调方法的工具。 -->
+  <Match>
+    <Bug pattern="MC_OVERRIDABLE_METHOD_CALL_IN_CONSTRUCTOR"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+  </Match>
+
+  <!-- ═══ RCN_ 家族：Groovy 真值判断生成的 null 检查 ═══
+       `if (x)` 在字节码里是"判空 + asBoolean"；WOULD_HAVE_BEEN_A_NPE 是它的姊妹规则
+       （实测样本：NoFormattingRuleSuppressionAstVisitor.visitImports）。 -->
+  <Match>
+    <Bug pattern="RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*"/>
+  </Match>
+
+  <!-- ═══ 已核对过的具体误报（不是放之四海，只针对这一处）═══
+       OS_OPEN_STREAM_EXCEPTION_PATH on GroovyFmt.coordinate()：
+       源码是 getResourceAsStream → 判空就抛 → try { load } finally { close }，
+       唯一在 try 之前的路径就是"流为 null 时抛出"，没有可泄漏的流。
+       SpotBugs 被 Groovy 生成的控制流骗了。 -->
+  <Match>
+    <Bug pattern="OS_OPEN_STREAM_EXCEPTION_PATH"/>
+    <Class name="io.github.heyuch.groovyfmt.gradle.GroovyFmt"/>
+    <Method name="coordinate"/>
+  </Match>
+
+  <!-- ═══ transient 字段是【设计决定】，但这条是"待确认假设"而非已证实的误报 ═══
+       GroovyFmtStep implements Serializable，而 loader/formatter/formatMethod/... 都是
+       显式 transient：设计意图是"不序列化这些、用时重建"。当前代码里没有 readObject。
+       因此这条排除的前提是："该步骤不会被反序列化成需要这些字段的状态"。
+       若这个前提不再成立（例如改用配置缓存反序列化它），必须回到这里删掉这条并修代码。 -->
+  <Match>
+    <Bug pattern="SE_TRANSIENT_FIELD_NOT_RESTORED"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\.spotless\..*"/>
+  </Match>
+
+  <!-- ═══ 刻意宽网捕获（测试夹具扫描）═══
+       FixtureRunner 扫全部语料算语法规则覆盖时，必须让"某个语料解析失败"不中断整轮扫描，
+       该语料由主流程单独报错。源码里已有明确注释与 @SuppressWarnings('CatchException')。 -->
+  <Match>
+    <Bug pattern="REC_CATCH_EXCEPTION"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\.test\..*"/>
+  </Match>
+
+  <!-- ═══ 测试里的 System.exit：就是命令行退出码契约测试 ═══
+       这些测试存在的意义就是验证 CLI 在各类输入下的退出码。 -->
+  <Match>
+    <Bug pattern="DM_EXIT"/>
+    <Class name="~io\.github\.heyuch\.groovyfmt\..*Test.*"/>
+  </Match>
+
+  <!-- ═══ 带类型的 catch 在 Groovy 里编译成 catch (Exception) + instanceof + 强转 ═══
+       源码写的是 catch (IllegalStateException e)，字节码里却是一次未经确认的强转 ——
+       但 Groovy 生成的代码会在类型不符时把原异常继续抛出，所以这不是真问题。
+       （实测：SpotlessStepTest.checkRejectionIsLoud，源码中不存在任何强转） -->
+  <Match>
+    <Bug pattern="BC_UNCONFIRMED_CAST"/>
+    <Class name="io.github.heyuch.groovyfmt.spotless.SpotlessStepTest"/>
+  </Match>
+
+</FindBugsFilter>
+
+<!--
+  实测根因的复现命令（在 groovyfmt-core 下执行）：
+
+    # _toString / hashCode 不在源码里（是 @Immutable 生成的）
+    grep -c '_toString\|hashCode' src/main/groovy/io/github/heyuch/groovyfmt/cst/CstToken.groovy   # -> 0
+    grep -nE '^@' src/main/groovy/io/github/heyuch/groovyfmt/cst/CstToken.groovy                   # -> @CompileStatic @Immutable
+
+    # __$stMC / $getStaticMetaClass 是编译器生成的
+    javap -p -cp build/classes/groovy/main io.github.heyuch.groovyfmt.annotate.SlotClassifier | grep -E '__\$stMC|getStaticMetaClass'
+
+    # RCN 的三处来自真值判断
+    sed -n '78p' src/main/groovy/io/github/heyuch/groovyfmt/cst/CstBuilder.groovy    # if (errors)
+    sed -n '143p' src/main/groovy/io/github/heyuch/groovyfmt/cli/Main.groovy         # if (files.empty)
+
+    # NP 来自编译器插入的 null
+    javap -p -c -cp build/classes/groovy/main io.github.heyuch.groovyfmt.pipeline.Formatter | grep -c aconst_null
+-->

@@ -403,17 +403,11 @@ class FixtureRunner {
         }
         FormatResult again = formatter.format(expected)
         if (again.skipped || again.output != expected) {
-            if (pending) {
-                // 期望输出自己不是不动点 —— 说明期望写错了，这要报出来
-                fail(outcome, label,
-                        "期望输出不是幂等不动点${again.skipped ? '（被跳过）' : ''}\n${lineDiff(expected, again.output)}")
-                return Status.FAIL
-            }
             fail(outcome, label,
                     "期望输出不是幂等不动点${again.skipped ? '（被跳过）' : ''}\n${lineDiff(expected, again.output)}")
             return Status.FAIL
         }
-        pending ? Status.READY : Status.PASS
+        Status.PASS
     }
 
     // ─────────────────────────── 必须被拒绝 ───────────────────────────
