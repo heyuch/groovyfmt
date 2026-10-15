@@ -1,5 +1,7 @@
 package io.github.heyuch.groovyfmt.layout
 
+import javax.annotation.Nullable
+
 import groovy.transform.CompileStatic
 
 import io.github.heyuch.groovyfmt.annotate.ParseContextIndex
@@ -52,7 +54,8 @@ class LineWrapper {
     // NestedForLoop：外层是「多轮直到收敛」、内层是「找第一条超限且可断的行」，
     // 拆成两个方法反而把迭代进展隐藏掉；属非格式化规则。
     @SuppressWarnings('NestedForLoop')
-    static String wrap(String source, FormatStyle style, ParseContextIndex index) {
+    static String wrap(@Nullable String source, FormatStyle style,
+            @Nullable ParseContextIndex index) {
         // 索引不可用时【拒绝折行】：断点的语境过滤全部依赖它，
         // 没有它就等于“在闭包里、for 头里也敢断”。宁可留下超长行。
         if (style.maxLineLength <= 0 || source == null || source.empty || index == null) {

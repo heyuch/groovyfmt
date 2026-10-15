@@ -11,6 +11,8 @@ configurations {
 
 dependencies {
     implementation "org.apache.groovy:groovy:${groovyVersion}"
+    // 只为本项目的空值契约注解（JSR-305）：compileOnly ⇒ 不随发布传递
+    compileOnly "com.google.code.findbugs:jsr305:3.0.2"
     groovy4 "org.apache.groovy:groovy:${groovyVersion}"
 }
 

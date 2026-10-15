@@ -55,9 +55,11 @@ CompilerConfiguration cfg = new CompilerConfiguration()
 // 但这里是运行期传值，必须直接给 Class 对象，否则变换拿到 String 会静默不用它。
 boolean inject = (System.getProperty('nullCheck.inject') ?: 'true') != 'false'
 if (inject) {
+    // 必须传【字符串】：实测四种写法里只有 String 会被变换真正采纳，
+    // Class / ClassExpression 都被静默忽略（于是"任何输入都报无发现"）。
     cfg.addCompilationCustomizers(new ASTTransformationCustomizer(
-            [extensions: [Class.forName(extension)]], Class.forName('groovy.transform.TypeChecked')))
-    println "  注入方式: ASTTransformationCustomizer(extensions=[${extension}.class])"
+            [extensions: [extension]], Class.forName('groovy.transform.TypeChecked')))
+    println "  注入方式: ASTTransformationCustomizer(extensions=['${extension}'])"
 } else {
     println "  注入方式: 不注入（依赖源码里的 @TypeChecked(extensions=...)）"
 }

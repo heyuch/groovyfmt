@@ -1,5 +1,7 @@
 package io.github.heyuch.groovyfmt.annotate
 
+import javax.annotation.Nullable
+
 import groovy.transform.CompileStatic
 import groovyjarjarantlr4.v4.runtime.CharStreams
 import groovyjarjarantlr4.v4.runtime.CommonTokenStream
@@ -129,6 +131,7 @@ class ParseContextIndex {
     }
 
     /** 该偏移处最内层的规则名；没有则 {@code null}。 */
+    @Nullable
     String innermostAt(int offset) {
         int id = nodeIdAt(offset)
         id < 0 ? null : RULE_NAMES[nodes[id].ruleId]
