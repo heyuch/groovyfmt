@@ -51,8 +51,16 @@ if (files.empty) {
 }
 
 CompilerConfiguration cfg = new CompilerConfiguration()
-cfg.addCompilationCustomizers(new ASTTransformationCustomizer(
-        [extensions: [extension]], Class.forName('groovy.transform.TypeChecked')))
+// extensions 的成员类型是 Class[] —— 源码里写字符串会被 Groovy 强制转换，
+// 但这里是运行期传值，必须直接给 Class 对象，否则变换拿到 String 会静默不用它。
+boolean inject = (System.getProperty('nullCheck.inject') ?: 'true') != 'false'
+if (inject) {
+    cfg.addCompilationCustomizers(new ASTTransformationCustomizer(
+            [extensions: [Class.forName(extension)]], Class.forName('groovy.transform.TypeChecked')))
+    println "  注入方式: ASTTransformationCustomizer(extensions=[${extension}.class])"
+} else {
+    println "  注入方式: 不注入（依赖源码里的 @TypeChecked(extensions=...)）"
+}
 
 def cu = new org.codehaus.groovy.control.CompilationUnit(cfg)
 files.each { cu.addSource(it) }
@@ -60,10 +68,21 @@ files.each { cu.addSource(it) }
 String report
 int findings
 try {
-    cu.compile(Phases.SEMANTIC_ANALYSIS)
-    report = "无发现"
-    findings = 0
-    println "  ✓ 语义分析通过，${extension} 没有报出问题"
+    // 必须到 INSTRUCTION_SELECTION：实测 @TypeChecked 的检查要到这一相才完成。
+    // 走过两个错相，都是"任何输入都报无发现"（连非法正则都不报）——比不检查更危险：
+    //   SEMANTIC_ANALYSIS  ✗ 变换还没跑         CANONICALIZATION ✗ 检查还没出结果
+    // INSTRUCTION_SELECTION ✓ 检查完成且尚未写 class 文件（写文件在 OUTPUT 相）。
+    cu.compile(Phases.INSTRUCTION_SELECTION)
+    def collected = cu.errorCollector.errors ?: []
+    findings = collected.size()
+    if (findings > 0) {
+        // 兜底：万一某个版本不抛异常而只收集错误，也绝不能报"无发现"
+        report = collected.collect { it.toString() }.join('\n')
+        println "  ✗ 编译未抛异常，但 errorCollector 收集到 ${findings} 条 —— 按发现处理"
+    } else {
+        report = "无发现"
+        println "  ✓ ${extension} 没有报出问题（相=${Phases.INSTRUCTION_SELECTION}）"
+    }
 } catch (MultipleCompilationErrorsException e) {
     report = e.message
     findings = report.readLines().findAll { it.contains('.groovy:') }.size()
