@@ -175,6 +175,85 @@ class FixtureRunner {
         }
     }
 
+    /**
+     * 期望输出指纹锁：防止"把实现输出当成规范"。
+     *
+     * 语料里的 .expected.groovy 就是 formatter 的【目标】，它必须是人工审查过、
+     * 并且经 CodeNarc 复核的。可是它很容易在无意中被改掉 —— 比如跑一次
+     * updateFixtures 就把当前的实现输出全盘接受，"规范"于是被实现悄悄改写，
+     * annotation 折行那次就是这么漏过去的。
+     *
+     * 所以每个期望文件的 SHA-256 都登记在 fixtures/corpus-review.txt 里。
+     * 期望文件被新增 / 改动 / 删除，而登记没跟着变 —— 测试直接失败并列出是哪些。
+     *
+     * 正确的处理流程（不是"把测试改绿"，而是审查）：
+     *   1. git diff 看清每个期望文件变成了什么样
+     *   2. 逐个判断：这个形状是人能接受的吗？CodeNarc 会不会报违规？
+     *   3. 确认无误后运行 tools/lock-corpus.sh 重新登记（这等于签署"我审过了"）
+     */
+    @SuppressWarnings('NestedBlockDepth')
+    static void checkReviewLock(Path root) {
+        String lockName = 'corpus-review.txt'
+        Map<String, String> registered = new TreeMap<String, String>()
+        File lock = root.resolve(lockName).toFile()
+        if (lock.exists()) {
+            lock.readLines()*.trim().findAll { String l -> l && !l.startsWith('#') }.each { String line ->
+                int sp = line.indexOf(' ')
+                if (sp > 0) {
+                    registered.put(line.substring(0, sp), line.substring(sp + 1).trim())
+                }
+            }
+        }
+        Map<String, String> actual = new TreeMap<String, String>()
+        root.toFile().eachFileRecurse { File f ->
+            if (f.file && f.name.endsWith('.expected.groovy')) {
+                String rel = root.toFile().toPath().relativize(f.toPath()) as String
+                actual.put(rel, sha256(f))
+            }
+        }
+        List<String> added = []
+        List<String> changed = []
+        actual.each { String k, String v ->
+            if (!registered.containsKey(k)) {
+                added << k
+            } else if (registered.get(k) != v) {
+                changed << k
+            }
+        }
+        List<String> removed = []
+        registered.each { String k, String v ->
+            if (!actual.containsKey(k)) {
+                removed << k
+            }
+        }
+        println String.format('  期望输出指纹锁: 登记 %d 个 / 实际 %d 个', registered.size(), actual.size())
+        if (added || changed || removed) {
+            if (added) {
+                println "  \u2717 ${added.size()} 个期望文件尚未登记："
+                added.each { String r -> println "      ${r}" }
+            }
+            if (changed) {
+                println "  \u2717 ${changed.size()} 个期望输出被改动但未登记 \u2014\u2014 这是【规范变更】，必须审查后才能登记："
+                changed.each { String r -> println "      ${r}" }
+            }
+            if (removed) {
+                println "  \u2717 ${removed.size()} 个登记项已无对应文件："
+                removed.each { String r -> println "      ${r}" }
+            }
+            throw new IllegalStateException('期望输出指纹锁不一致；审查 git diff 后运行 tools/lock-corpus.sh 重新登记')
+        }
+    }
+
+    /** 一个文件的 SHA-256（十六进制小写）。 */
+    private static String sha256(File f) {
+        byte[] digest = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes)
+        StringBuilder sb = new StringBuilder(digest.length * 2)
+        for (int i = 0; i < digest.length; i++) {
+            sb.append(String.format('%02x', digest[i] & 0xff))
+        }
+        sb.toString()
+    }
+
     private FixtureRunner() {
     }
 
@@ -183,6 +262,7 @@ class FixtureRunner {
         boolean update = System.getProperty(UPDATE_PROPERTY) == 'true'
 
         checkRuleCoverage(root, update)
+        checkReviewLock(root)
 
         List<File> fixtures = []
         root.toFile().eachFileRecurse { File f ->
