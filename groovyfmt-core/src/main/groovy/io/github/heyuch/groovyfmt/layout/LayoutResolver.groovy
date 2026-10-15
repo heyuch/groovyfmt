@@ -229,6 +229,9 @@ class LayoutResolver {
      * <p>判据必须是“更早”而不是“不同”：{@code f(new Runnable() {} 里，
      * {@code {} 处的最内层是 {@code f(}，它比行首的方法体括号更【晚】，此时不该回退。
      */
+    // CyclomaticComplexity：这里是决定块体锚点的完整判断（闭括号行、匿名类两种形状、
+    // 闭包续行、跨行声明回退），拆开会把同一个决策分散到多处；属非格式化规则。
+    @SuppressWarnings('CyclomaticComplexity')
     private static int bodyAnchorLine(Cst cst, Annotated annotated, ParseContextIndex index,
             int braceToken) {
         int braceLine = annotated.lineOf(braceToken)
@@ -236,6 +239,30 @@ class LayoutResolver {
         if (firstCode >= 0 && firstCode != braceToken
                 && startsWithCloser(annotated, firstCode)) {
             return braceLine
+        }
+
+        // 闭包体：{ 落在【续行】上时，锚到【持有该语句的块】，与匿名类"跟随实参"的情形同理。
+        // 实测 CodeNarc 的 Indentation 对这类闭包体期望 语句块+4（12/16/20 那一族）；
+        // 我们原来锚到 { 所在的续行（24+4=28），于是 output 模块的 OutputFileServiceImpl 被判违规。
+        // 只对【尾随实参】形的闭包回退：{ 前面是逗号（..., { ... }）。
+        // 实测 CodeNarc 对两种形状期望不同族：
+        //   ..., {  -> 12/16/20（语句块+4）
+        //   ({ ->     -> 24/28/32（{ 所在续行+4，我们原来的行为，本来就对）
+        // 所以这里用"前一个有效 token 是逗号"把两者分开。
+        if (index != null && firstCode >= 0 && firstCode != braceToken
+                && previousCodeTokenText(cst, braceToken) == ','
+                && index.innermostAt(cst.tokens[braceToken].start) == 'closure') {
+            int closLimit = Math.max(0, braceLine - 40)
+            int m = braceLine
+            while (m > closLimit && !startsStatementAt(cst, annotated, index, m)) {
+                if (isClassDeclarationLine(cst, annotated, index, m)) {
+                    return braceLine
+                }
+                m--
+            }
+            if (m > closLimit) {
+                return m
+            }
         }
         // 只对【匿名类】回退。信号在【行首 token】上（实测）：
         //   匿名类的 { 所在行以表达式开头 -> innermost = primary；
