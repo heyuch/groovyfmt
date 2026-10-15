@@ -18,3 +18,9 @@
 # 2026-02：具名实参曾一度要求 k: v（与代码库既有风格一致），因而登记过
 # SpaceAroundMapEntryColon。按"默认完全遵守 CodeNarc"的决定，具名实参与 map entry
 # 一样都不加空格，所以豁免已全部删除 —— 本文件目前为空（只有这段说明）。
+#
+# 可接受的 LineLength：wrapping/no-break-before-map-colon 的期望里第一行必然超过 120 ——
+# 那条具名实参的值是一个长 GString，字符串内部不能断行，所以折行器无处可断。
+# 这条语料存在的意义是钉住"冒号不起行、断点处不产生空行"，不是钉行长，
+# 所以这里登记为已知且可接受（真实代码里同类长行也是这个原因，见 tenant-mgmt 的 582 处）。
+LineLength wrapping/no-break-before-map-colon.expected.groovy

@@ -127,7 +127,10 @@ class LineWrapper {
      */
     private static int bestBreakAtOrBefore(String line, int limit, int lineOffset,
             ParseContextIndex index) {
+        // 断点必须让【后半段非空】，否则折行会切出一个空行 ——
+        // 实测真实代码里就是这样在实参列表中间多出一个空行的（后半段只有空白）。
         List<BreakPoint> all = collectBreakPoints(line, lineOffset, index)
+        .findAll { BreakPoint b -> !line.substring(b.position).trim().empty }
         if (all.empty) {
             return -1
         }
@@ -220,7 +223,12 @@ class LineWrapper {
                     int prio = c == ('.' as char) ? PRIO_DOT : PRIO_TERNARY
                     // 不允许在链的【头部】断开：前缀里必须已经出现过 . ( ) ]，
                     // 否则 `list.each { ... }` 会被切成 `list` + `.each { ... }`（前半只剩接收者）。
-                    if (c != ('.' as char) || isChainTail(line, i)) {
+                    // 也不允许在 map / 具名实参的冒号【之前】断开：那会把键与冒号拆到两行，
+                    // 实测 CodeNarc 的 SpaceAroundMapEntryColon 会因此报违规（"键 [x] 的冒号后不是 \S"）。
+                    // 三元冒号处 innermost 不是 mapEntry，所以这样判不会误伤三元。
+                    boolean mapColon = c == (':' as char) && index != null
+                    && index.innermostAt(lineOffset + i) == 'mapEntry'
+                    if (!mapColon && (c != ('.' as char) || isChainTail(line, i))) {
                         addBreak(out, i, depth, prio, lineOffset, index)
                     }
                 } else if (isAssignmentAt(line, i)) {
