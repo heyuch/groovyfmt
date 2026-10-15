@@ -162,7 +162,8 @@ class LineWrapper {
     private static final int PRIO_COMMA = 1
     private static final int PRIO_TERNARY = 2
     private static final int PRIO_OPERATOR = 3
-    private static final int PRIO_DOT = 4
+    private static final int PRIO_INNER_ASSIGNMENT = 4
+    private static final int PRIO_DOT = 5
 
     private static final String OP_CHARS = '=+-*/%&|^<>?!'
 
@@ -223,7 +224,12 @@ class LineWrapper {
                         addBreak(out, i, depth, prio, lineOffset, index)
                     }
                 } else if (isAssignmentAt(line, i)) {
-                    addBreak(out, i + 1, depth, PRIO_ASSIGNMENT, lineOffset, index)
+                    // 语句级赋值（深度 0）把"算什么"与"怎么算"分开，优先级最高；
+                    // 但【括号内】的赋值（注解属性 @X(in = ...)、命名实参、括号内表达式）
+                    // 并不是语句的主分割点：实测 @Parameter(..., in = ParameterIn.HEADER) 在属性的
+                    // 逗号处断开才对，而我们原来在 `=` 后面断开。
+                    int prio = depth == 0 ? PRIO_ASSIGNMENT : PRIO_INNER_ASSIGNMENT
+                    addBreak(out, i + 1, depth, prio, lineOffset, index)
                 }
             } else if (c == ('\\' as char)) {
                 i += 2
