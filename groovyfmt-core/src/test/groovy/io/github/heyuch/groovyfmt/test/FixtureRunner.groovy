@@ -4,6 +4,8 @@ import java.nio.file.Path
 
 import groovy.transform.CompileStatic
 
+import org.apache.groovy.parser.antlr4.GroovyLangParser
+
 import io.github.heyuch.groovyfmt.cst.Cst
 import io.github.heyuch.groovyfmt.cst.CstBuilder
 import io.github.heyuch.groovyfmt.cst.GroovySyntaxException
@@ -99,12 +101,88 @@ class FixtureRunner {
 
     }
 
+    // NestedBlockDepth：本质是"遍历目录 → 读文件 → 读解析树 → 匹配规则名"的嵌套，
+    // 拆成多个方法反而把一次遍历分散到四处；属非格式化规则。
+    // CatchException：这里必须宽网捕获——某一个语料解析失败不能中断整轮
+    // 覆盖扫描（那个语料会由主流程自己报错）；属非格式化规则。
+    @SuppressWarnings(['CatchException', 'NestedBlockDepth'])
+    /**
+     * 语法规则覆盖门禁。
+     *
+     * 用 GroovyLangParser.ruleNames（165 条，就是 Groovy 的 grammar 规则表）当清单，
+     * 扫一遍所有语料的解析树，看每条规则是否至少被一条语料"碰到"过。
+     * 没被碰到的必须显式列在 fixtures/coverage-whitelist.txt 里，否则测试失败。
+     *
+     * 为什么是"从解析树自动算"而不是"每条语料手写声明它练到哪些规则"：
+     * 手写声明可以说谎（声明了一条其实没练到的规则），解析树不会。
+     * 代价是"顺带覆盖"也会被算进去，所以白名单变短时测试会打印
+     * "这条规则是被哪个语料碰到的"，供人判断它到底是不是有意的。
+     *
+     * 覆盖率不替代 CodeNarc 和安全性校验：它只回答"这个结构被解析过一遍了吗"。
+     */
+    static void checkRuleCoverage(Path root, boolean update) {
+        String whitelistName = 'coverage-whitelist.txt'
+        String header = '# 语法规则覆盖白名单：这里列的是【还没有任何语料覆盖】的 grammar 规则。\n' +
+        '# 只允许变短；新增一条必须在提交信息里说明理由。\n' +
+        '# 由 ./gradlew updateFixtures 重新生成（会同时重写所有 .expected.groovy，务必逐条审查 diff）。\n'
+        Set<String> all = new TreeSet<String>(GroovyLangParser.ruleNames as List<String>)
+        Set<String> covered = new TreeSet<String>()
+        Map<String, String> firstBy = new HashMap<String, String>()
+        root.toFile().eachFileRecurse { File f ->
+            if (f.file && f.name.endsWith('.groovy') && !f.name.endsWith('.expected.groovy')) {
+                try {
+                    String shape = CstBuilder.treeShapeOnly(f.text)
+                    java.util.regex.Matcher m = shape =~ /\(([A-Za-z_][A-Za-z0-9_]*)/
+                    while (m.find()) {
+                        String rule = m.group(1)
+                        if (all.contains(rule)) {
+                            covered << rule
+                            if (!firstBy.containsKey(rule)) {
+                                firstBy.put(rule, root.toFile().toPath().relativize(f.toPath()) as String)
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // 语料本身解析失败的情况由主流程负责报错，这里跳过即可
+                }
+            }
+        }
+        Set<String> missing = new TreeSet<String>(all - covered)
+        File whitelist = root.resolve(whitelistName).toFile()
+        if (update) {
+            whitelist.text = header + missing.join('\n') + '\n'
+            println "  \u27f3 已写出 ${whitelistName}（未覆盖 ${missing.size()} 条）"
+            return
+        }
+        Set<String> declared = new TreeSet<String>()
+        if (whitelist.exists()) {
+            declared.addAll(whitelist.readLines()*.trim()
+                    .findAll { String l -> l && !l.startsWith('#') } as List<String>)
+        }
+        int pct = (covered.size() * 100 / all.size()) as int
+        println String.format('  语法规则覆盖: %d/%d = %d%%，白名单 %d 条',
+                covered.size(), all.size(), pct, declared.size())
+        Set<String> newlyCovered = new TreeSet<String>(declared - missing)
+        if (newlyCovered) {
+            println "  \u2713 白名单里这 ${newlyCovered.size()} 条已被覆盖，可以从白名单移除（括号里是首个碰到的语料）："
+            newlyCovered.each { String r -> println "      ${r}   <- ${firstBy.get(r)}" }
+        }
+        Set<String> newlyMissing = new TreeSet<String>(missing - declared)
+        if (newlyMissing) {
+            println "  \u2717 下面 ${newlyMissing.size()} 条规则没有任何语料覆盖，且不在白名单里："
+            newlyMissing.each { String r -> println "      ${r}" }
+            throw new IllegalStateException("语法规则覆盖缺口: ${newlyMissing}")
+        }
+    }
+
     private FixtureRunner() {
     }
 
     static Outcome run(Path root, Formatter formatter) {
         def outcome = new Outcome()
         boolean update = System.getProperty(UPDATE_PROPERTY) == 'true'
+
+        checkRuleCoverage(root, update)
 
         List<File> fixtures = []
         root.toFile().eachFileRecurse { File f ->

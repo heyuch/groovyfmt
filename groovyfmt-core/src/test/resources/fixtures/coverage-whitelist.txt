@@ -1,0 +1,63 @@
+# 语法规则覆盖白名单
+#
+# 这里列的是【目前还没有任何语料覆盖】的 Groovy grammar 规则
+# （规则名来自 org.apache.groovy.parser.antlr4.GroovyLangParser.ruleNames，共 165 条）。
+#
+# 规则：
+#   1. 这份清单只允许【变短】。每删掉一条，就意味着新语料真的碰到了一个规则。
+#   2. 新增一条必须在提交信息里说明理由（例如"该结构在 Groovy 4 里已废弃"）。
+#   3. 用 ./gradlew updateFixtures 可以重新生成；它会同时重写所有 .expected.groovy，
+#      所以运行后【必须逐条审查 diff】，不要盲提交。
+#
+# 每次跑测试都会打印覆盖率；如果某条规则既没被覆盖、又不在本清单里，测试直接失败。
+annotationsOpt
+argumentList
+argumentListElement
+arrayInitializer
+builtInType
+castOperandExpression
+castParExpression
+classOrInterfaceModifiers
+classOrInterfaceModifiersOpt
+commandArgument
+commandPrimary
+compactConstructorDeclaration
+continueStatement
+dim
+dynamicMemberName
+elementValueArrayInitializer
+enumConstant
+enumConstants
+finallyBlock
+firstArgumentListElement
+generalClassOrInterfaceType
+indexPropertyArgs
+keywords
+lambdaBody
+lambdaExpression
+lambdaParameters
+namedArg
+namedArgLabel
+namedArgPrimary
+namedPropertyArg
+namedPropertyArgLabel
+namedPropertyArgList
+namedPropertyArgPrimary
+namedPropertyArgs
+nonWildcardTypeArguments
+standardClassOrInterfaceType
+standardLambdaExpression
+standardLambdaParameters
+standardType
+switchBlockStatementExpressionGroup
+switchExpression
+switchExpressionLabel
+thisFormalParameter
+typeBound
+typeNamePair
+typeNamePairs
+typeParameter
+typeParameters
+variableInitializers
+variableNames
+yieldStatement
