@@ -35,3 +35,33 @@ tasks.register('runTests', JavaExec) {
 tasks.named('check') {
     dependsOn 'runTests'
 }
+
+// ── 独立的 Groovy 6 空值检查（隔离：不让 Groovy 6 进入本项目的任何 classpath）──────
+// 目的：借 Groovy 6 的 NullChecker 做一次编译期空值检查，而本项目仍按 Groovy 4 构建。
+// 手法：一个只给这个任务用的 configuration + JavaExec 直接跑 Groovy 6 的脚本。
+//      脚本不参与编译，所以 Groovy 6 不会渗进 main/test 的 compileClasspath。
+configurations {
+    nullChecker
+}
+
+dependencies {
+    nullChecker "org.apache.groovy:groovy:${project.findProperty('nullCheckerGroovyVersion') ?: '6.0.0'}"
+    // NullChecker / StrictNullChecker 在单独的 artifact 里（Groovy 5+ 模块拆分）
+    nullChecker "org.apache.groovy:groovy-typecheckers:${project.findProperty('nullCheckerGroovyVersion') ?: '6.0.0'}"
+}
+
+tasks.register('nullCheck', JavaExec) {
+    group = 'verification'
+    description = '用 Groovy 6 的 NullChecker 单独跑一次空值检查（不影响本项目的 Groovy 4 构建）'
+    // 目标 classpath 里【去掉 groovy*/antlr*】—— 那些由 nullChecker 那份 Groovy 6 提供，
+    // 否则同一个类加载器里会出现 Groovy 4 与 Groovy 6 两份同名的 groovy.lang/AST 类。
+    classpath = configurations.nullChecker + configurations.compileClasspath.filter { f ->
+        !(f.name.startsWith('groovy') || f.name.startsWith('antlr'))
+    }
+    mainClass = 'groovy.ui.GroovyMain'
+    def dirs = (project.findProperty('nullCheckDirs') ?: 'src/main/groovy').toString().split(',')
+    args = ["${rootDir}/tools/nullcheck.groovy"] + dirs.toList()
+    systemProperty 'nullCheck.extension', (project.findProperty('nullCheckExtension') ?: 'groovy.typecheckers.NullChecker')
+    systemProperty 'nullCheck.report', "${project.buildDir}/reports/nullcheck.txt"
+    outputs.upToDateWhen { false }
+}
