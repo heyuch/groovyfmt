@@ -134,11 +134,15 @@
     <Method name="coordinate"/>
   </Match>
 
-  <!-- ═══ transient 字段是【设计决定】，但这条是"待确认假设"而非已证实的误报 ═══
-       GroovyFmtStep implements Serializable，而 loader/formatter/formatMethod/... 都是
-       显式 transient：设计意图是"不序列化这些、用时重建"。当前代码里没有 readObject。
-       因此这条排除的前提是："该步骤不会被反序列化成需要这些字段的状态"。
-       若这个前提不再成立（例如改用配置缓存反序列化它），必须回到这里删掉这条并修代码。 -->
+  <!-- ═══ transient 字段：已验证，且由测试守住 ═══
+       GroovyFmtStep implements Serializable，而 loader/formatter/formatMethod/... 都是显式 transient。
+       这不是漏写 readObject，而是刻意的设计：makeLoaded() 之外的 apply() 会先调用
+       ensureLoaded()，在 formatter 为空时重建隔离类加载器与全部反射句柄；真正参与序列化的
+       状态只有 classpath 一个字段（Spotless 的增量/缓存判断正是建立在它上面）。
+
+       这条曾经被记成"待确认假设"，现在由 SpotlessStepTest.checkSurvivesSerialization
+       真实地走一遍 ObjectOutputStream/ObjectInputStream 往返来守：反序列化后的实例
+       必须能直接格式化。该测试一旦失败，说明懒加载自愈被破坏 —— 那时必须回这里删掉这条排除。 -->
   <Match>
     <Bug pattern="SE_TRANSIENT_FIELD_NOT_RESTORED"/>
     <Class name="~io\.github\.heyuch\.groovyfmt\.spotless\..*"/>

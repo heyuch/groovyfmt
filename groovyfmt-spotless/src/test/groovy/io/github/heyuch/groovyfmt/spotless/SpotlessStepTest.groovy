@@ -9,12 +9,14 @@ import groovy.transform.CompileStatic
  * formatter 本身的行为由 groovyfmt-core 的 45 个 fixture 覆盖，
  * 适配器再测一遍没有意义，只会让两处都得跟着改。
  *
- * <p>这里真正要守住三件事：
+ * <p>这里真正要守住四件事：
  * <ol>
  *   <li>能在<b>隔离类加载器</b>里加载 core —— 这是适配器存在的全部理由；</li>
  *   <li>被安全闸门拒绝的文件必须<b>抛错</b>而不是静默返回原文 ——
  *       静默会让 spotlessCheck 报"干净"，这是 golden 测试静默失效的同一个陷阱；</li>
- *   <li>幂等。</li>
+ *   <li>幂等；</li>
+ *   <li><b>序列化往返后仍可用</b> —— Spotless 会序列化步骤状态，
+ *       反序列化后 transient 字段为空，必须由懒加载自愈。</li>
  * </ol>
  */
 @CompileStatic
@@ -36,6 +38,7 @@ class SpotlessStepTest {
             check('幂等', step.apply(once) == once, '')
             checkBlankLineCapability(step)
             checkRejectionIsLoud(step)
+            checkSurvivesSerialization(step)
         } finally {
             step.close()
         }
@@ -60,6 +63,31 @@ class SpotlessStepTest {
             fail('被拒绝的文件必须抛错，不能静默放过', '居然没抛异常')
         } catch (IllegalStateException e) {
             check('被拒绝的文件抛错且信息可读', e.message.contains('拒绝格式化'), e.message.take(70))
+        }
+    }
+
+    /**
+     * Spotless 会把步骤的【状态】序列化（{@code FormatterStep.create} + {@code SerializedFunction}），
+     * 所以"transient 字段反序列化后为空"是真实存在的路径，不是理论问题。
+     *
+     * <p>这里真的走一遍序列化往返。往返后的实例必须能直接格式化 —— 因为 {@code apply()} 会先调
+     * {@code ensureLoaded()} 重建隔离类加载器与全部反射句柄。这条测试守的就是那个"懒加载自愈"：
+     * 它一旦被破坏，Spotless 的增量与缓存路径会在真实项目里以 NPE 的形式炸掉。
+     *
+     * <p>（SpotBugs 曾对这条报 SE_TRANSIENT_FIELD_NOT_RESTORED；现在它由这条测试兜住，
+     * 而不再只是一句"设计如此"的注释。）
+     */
+    private static void checkSurvivesSerialization(GroovyFmtStep step) {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream()
+        new ObjectOutputStream(buffer).withCloseable { ObjectOutputStream out -> out.writeObject(step) }
+        GroovyFmtStep round = new ObjectInputStream(new ByteArrayInputStream(buffer.toByteArray()))
+        .withCloseable { ObjectInputStream input -> input.readObject() as GroovyFmtStep }
+        try {
+            String formatted = round.apply('def x=1\n')
+            check('序列化往返后仍能格式化（transient 状态由 ensureLoaded 重建）',
+                    formatted == 'def x = 1\n', "实际 [${formatted.replace('\n', '\\n')}]")
+        } finally {
+            round.close()
         }
     }
 
